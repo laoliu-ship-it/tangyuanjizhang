@@ -1,0 +1,33 @@
+services:
+  ocr-service:
+    image: fandian-ocr:latest
+    restart: unless-stopped
+
+  server:
+    image: fandian-server:latest
+    restart: unless-stopped
+    depends_on:
+      - ocr-service
+    environment:
+      DB_DSN: root:allgood@tcp(host.docker.internal:3306)/fandian?charset=utf8mb4&parseTime=True
+      JWT_SECRET: ${JWT_SECRET}
+      OCR_ENGINE: rapidocr
+      OCR_RAPIDOCR_URL: http://ocr-service:8001/ocr
+      OCR_AI_MODE: "false"
+      UPLOAD_PATH: ./uploads
+      SERVER_PORT: 8080
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    volumes:
+      - uploads_data:/app/uploads
+
+  web:
+    image: fandian-web:latest
+    restart: unless-stopped
+    depends_on:
+      - server
+    ports:
+      - "8090:80"
+
+volumes:
+  uploads_data:

@@ -1,0 +1,20 @@
+#!/bin/bash
+set -e
+
+# 构建服务端 Docker 镜像
+if ! docker build -t fandianjizhang-server:latest "${TRIM_APPDEST}/"; then
+    echo "Failed to build server image" >&2
+    exit 1
+fi
+
+# 如果 OCR 镜像不存在，尝试构建一个简单的 fallback
+if ! docker image inspect fandian-ocr:latest > /dev/null 2>&1; then
+    echo "WARN: OCR image 'fandian-ocr:latest' not found, OCR feature may not work." >&2
+    echo "WARN: Please build and load fandian-ocr:latest image manually." >&2
+fi
+
+# 创建上传目录
+UPLOAD_DIR="/${TRIM_APPDEST_VOL}/@appshare/fandianjizhang/uploads"
+mkdir -p "${UPLOAD_DIR}"
+
+exit 0

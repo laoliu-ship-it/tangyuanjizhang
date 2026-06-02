@@ -1,0 +1,25 @@
+{
+    "docker-project":
+    {
+        "projects":
+        [
+            {
+                "name": "fandianjizhang",
+                "path": "docker"
+            }
+        ]
+    },
+    "data-share":
+    {
+        "shares":
+        [
+            {
+                "name": "fandianjizhang",
+                "permission":
+                {
+                    "rw": ["docker-fandianjizhang"]
+                }
+            }
+        ]
+    }
+}

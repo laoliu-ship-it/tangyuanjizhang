@@ -1,0 +1,5 @@
+server/web/static/*
+!server/web/static/.gitkeep
+!server/web/static/index.html
+web/dist/
+dist-server

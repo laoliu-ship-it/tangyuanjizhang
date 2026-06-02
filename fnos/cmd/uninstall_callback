@@ -1,0 +1,3 @@
+#!/bin/bash
+docker rmi fandianjizhang-server:latest 2>/dev/null || true
+exit 0

@@ -1,0 +1,66 @@
+- generic [ref=e3]:
+  - complementary [ref=e4]:
+    - generic [ref=e5]:
+      - heading "饭店记账" [level=1] [ref=e6]
+      - paragraph [ref=e7]: 专业记账管理工具
+    - generic [ref=e9]:
+      - combobox [ref=e10] [cursor=pointer]:
+        - option "mm1的团队" [selected]
+      - generic:
+        - img
+      - generic [ref=e11]: 当前租户：mm1的团队
+    - navigation [ref=e12]:
+      - link "首页" [ref=e13] [cursor=pointer]:
+        - /url: /
+        - img [ref=e14]
+        - generic [ref=e16]: 首页
+      - link "记账" [ref=e17] [cursor=pointer]:
+        - /url: /transactions
+        - img [ref=e18]
+        - generic [ref=e20]: 记账
+      - link "统计" [ref=e21] [cursor=pointer]:
+        - /url: /statistics
+        - img [ref=e22]
+        - generic [ref=e24]: 统计
+      - link "设置" [ref=e25] [cursor=pointer]:
+        - /url: /settings
+        - img [ref=e26]
+        - generic [ref=e29]: 设置
+    - generic [ref=e30]:
+      - generic [ref=e31]:
+        - generic [ref=e32]: M
+        - generic [ref=e33]: mm1
+      - button "退出登录" [ref=e34] [cursor=pointer]:
+        - img [ref=e35]
+        - text: 退出登录
+  - main [ref=e37]:
+    - generic [ref=e38]:
+      - heading "统计分析" [level=1] [ref=e39]
+      - generic [ref=e41]:
+        - button "月视图" [ref=e42] [cursor=pointer]
+        - button "年视图" [ref=e43] [cursor=pointer]
+        - button "日期范围" [active] [ref=e44] [cursor=pointer]
+      - generic [ref=e73]:
+        - textbox [ref=e74]: 2026-05-01
+        - generic [ref=e75]: 至
+        - textbox [ref=e76]: 2026-05-29
+      - generic [ref=e77]:
+        - generic [ref=e78]:
+          - paragraph [ref=e79]: 总收入
+          - paragraph [ref=e80]: ¥0.00
+        - generic [ref=e81]:
+          - paragraph [ref=e82]: 总支出
+          - paragraph [ref=e83]: ¥0.00
+        - generic [ref=e84]:
+          - paragraph [ref=e85]: 净结余
+          - paragraph [ref=e86]: +¥0.00
+      - generic [ref=e87]:
+        - heading "每日收支" [level=3] [ref=e88]
+        - generic [ref=e89]: 所选范围内暂无数据
+      - generic [ref=e90]:
+        - generic [ref=e91]:
+          - heading "支出分类" [level=3] [ref=e92]
+          - generic [ref=e93]: 暂无支出
+        - generic [ref=e94]:
+          - heading "收入分类" [level=3] [ref=e95]
+          - generic [ref=e96]: 暂无收入

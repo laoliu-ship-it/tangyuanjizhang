@@ -1,0 +1,20 @@
+[Unit]
+Description=饭店记账 Web Server
+After=network.target
+
+[Service]
+Type=simple
+WorkingDirectory=%h/fandianjizhang/app
+ExecStart=%h/fandianjizhang/app/server
+EnvironmentFile=%h/fandianjizhang/.env
+Environment=DB_DSN=root:allgood@tcp(127.0.0.1:3306)/fandian?charset=utf8mb4&parseTime=True
+Environment=OCR_ENGINE=rapidocr
+Environment=OCR_RAPIDOCR_URL=http://127.0.0.1:8001/ocr
+Environment=OCR_AI_MODE=false
+Environment=UPLOAD_PATH=%h/fandianjizhang/app/uploads
+Environment=SERVER_PORT=8090
+Restart=always
+RestartSec=3
+
+[Install]
+WantedBy=default.target

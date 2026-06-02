@@ -1,0 +1,17 @@
+appname               = fandianjizhang
+version               = 1.0.0
+display_name          = 饭店记账
+desc                  = 饭店收支记账本，支持拍照 OCR 识别金额，多租户多成员协作。
+platform              = x86
+source                = thirdparty
+maintainer            = chen
+maintainer_url        = https://github.com/chen/fandianjizhang
+distributor           = chen
+distributor_url       = https://github.com/chen/fandianjizhang
+os_min_ver            = 0.9.27
+desktop_uidir         = ui
+desktop_applaunchname = fandianjizhang.Application
+service_port          = 8090
+checkport             = true
+changelog             = 1.0.0 初始版本
+checksum              =

@@ -1,0 +1,10 @@
+jizhang.zaixianapp.cn {
+	reverse_proxy localhost:8080
+}
+
+tangyuanjizhang.zaixianapp.cn {
+	root * /opt/jizhang/site
+	file_server
+	encode gzip
+	try_files {path} /index.html
+}

@@ -1,0 +1,246 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>汤圆记账 - 简洁高效的多人协作记账工具</title>
+  <meta name="description" content="汤圆记账是一款专为团队设计的多人协作记账应用，支持OCR智能识别、多租户管理、角色权限控制、数据统计与导出。">
+  <style>
+    :root {
+      --primary: #4f46e5;
+      --primary-light: #818cf8;
+      --bg: #0f172a;
+      --bg-card: #1e293b;
+      --text: #e2e8f0;
+      --text-muted: #94a3b8;
+      --accent: #f97316;
+      --radius: 12px;
+    }
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", sans-serif;
+      background: var(--bg);
+      color: var(--text);
+      line-height: 1.6;
+    }
+    .container { max-width: 1100px; margin: 0 auto; padding: 0 24px; }
+
+    /* Hero */
+    .hero {
+      padding: 120px 0 80px;
+      text-align: center;
+      position: relative;
+      overflow: hidden;
+    }
+    .hero::before {
+      content: '';
+      position: absolute;
+      inset: 0;
+      background: radial-gradient(ellipse at 50% 0%, rgba(79,70,229,0.15) 0%, transparent 70%);
+    }
+    .hero-logo {
+      width: 80px; height: 80px;
+      background: var(--primary);
+      border-radius: 50%;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 36px;
+      margin-bottom: 24px;
+      position: relative;
+    }
+    .hero h1 { font-size: 48px; font-weight: 700; margin-bottom: 16px; }
+    .hero p { font-size: 20px; color: var(--text-muted); max-width: 600px; margin: 0 auto 40px; }
+    .btn {
+      display: inline-flex;
+      padding: 14px 32px;
+      border-radius: 8px;
+      font-size: 16px;
+      font-weight: 600;
+      text-decoration: none;
+      transition: all 0.2s;
+      cursor: pointer;
+    }
+    .btn-primary { background: var(--primary); color: #fff; }
+    .btn-primary:hover { background: var(--primary-light); transform: translateY(-1px); }
+    .btn-outline { border: 1px solid var(--text-muted); color: var(--text); margin-left: 12px; }
+    .btn-outline:hover { border-color: var(--primary); color: var(--primary-light); }
+
+    /* Features */
+    .features { padding: 80px 0; }
+    .features h2 { text-align: center; font-size: 32px; margin-bottom: 48px; }
+    .features-grid {
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      gap: 24px;
+    }
+    .feature-card {
+      background: var(--bg-card);
+      border-radius: var(--radius);
+      padding: 32px;
+      transition: transform 0.2s;
+    }
+    .feature-card:hover { transform: translateY(-4px); }
+    .feature-icon {
+      width: 48px; height: 48px;
+      background: rgba(79,70,229,0.15);
+      border-radius: 8px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 24px;
+      margin-bottom: 16px;
+    }
+    .feature-card h3 { font-size: 18px; margin-bottom: 8px; }
+    .feature-card p { color: var(--text-muted); font-size: 14px; }
+
+    /* How it works */
+    .steps { padding: 80px 0; }
+    .steps h2 { text-align: center; font-size: 32px; margin-bottom: 48px; }
+    .steps-list {
+      display: flex;
+      gap: 32px;
+      justify-content: center;
+    }
+    .step {
+      text-align: center;
+      flex: 1;
+      max-width: 260px;
+    }
+    .step-num {
+      width: 56px; height: 56px;
+      background: var(--primary);
+      border-radius: 50%;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 24px;
+      font-weight: 700;
+      color: #fff;
+      margin-bottom: 16px;
+    }
+    .step h3 { font-size: 18px; margin-bottom: 8px; }
+    .step p { color: var(--text-muted); font-size: 14px; }
+
+    /* CTA */
+    .cta {
+      padding: 80px 0;
+      text-align: center;
+    }
+    .cta-box {
+      background: var(--bg-card);
+      border-radius: var(--radius);
+      padding: 48px;
+      border: 1px solid rgba(79,70,229,0.3);
+    }
+    .cta h2 { font-size: 32px; margin-bottom: 16px; }
+    .cta p { color: var(--text-muted); margin-bottom: 32px; }
+
+    /* Footer */
+    footer {
+      padding: 40px 0;
+      border-top: 1px solid rgba(148,163,184,0.2);
+      text-align: center;
+      color: var(--text-muted);
+      font-size: 14px;
+    }
+
+    @media (max-width: 768px) {
+      .hero h1 { font-size: 32px; }
+      .hero p { font-size: 16px; }
+      .features-grid { grid-template-columns: 1fr; }
+      .steps-list { flex-direction: column; align-items: center; }
+    }
+  </style>
+</head>
+<body>
+
+<section class="hero">
+  <div class="container">
+    <div class="hero-logo">&#127834;</div>
+    <h1>汤圆记账</h1>
+    <p>简洁高效的多人协作记账工具，专为团队和小型商户设计</p>
+    <a href="https://jizhang.zaixianapp.cn" class="btn btn-primary">立即使用</a>
+    <a href="#features" class="btn btn-outline">了解更多</a>
+  </div>
+</section>
+
+<section class="features" id="features">
+  <div class="container">
+    <h2>核心功能</h2>
+    <div class="features-grid">
+      <div class="feature-card">
+        <div class="feature-icon">&#128101;</div>
+        <h3>多租户协作</h3>
+        <p>支持创建多个记账空间，邀请团队成员加入，每个租户数据完全隔离，安全可靠。</p>
+      </div>
+      <div class="feature-card">
+        <div class="feature-icon">&#128274;</div>
+        <h3>角色权限管理</h3>
+        <p>管理员、编辑者、查看者、财务等多级角色，精确控制谁可以查看、录入或修改数据。</p>
+      </div>
+      <div class="feature-card">
+        <div class="feature-icon">&#128247;</div>
+        <h3>OCR 智能识别</h3>
+        <p>拍照上传票据，自动识别金额、商户等信息，一键生成记账记录，告别手动录入。</p>
+      </div>
+      <div class="feature-card">
+        <div class="feature-icon">&#128202;</div>
+        <h3>数据统计</h3>
+        <p>日度、月度、年度多维度统计分析，收支趋势一目了然，助力科学决策。</p>
+      </div>
+      <div class="feature-card">
+        <div class="feature-icon">&#128190;</div>
+        <h3>Excel 导入导出</h3>
+        <p>一键导出数据为 Excel 报表，支持批量导入，轻松对接财务系统。</p>
+      </div>
+      <div class="feature-card">
+        <div class="feature-icon">&#127978;</div>
+        <h3>商户与分类</h3>
+        <p>自定义收支分类和常用商户，录入时快速选择，让记账更有条理。</p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section class="steps">
+  <div class="container">
+    <h2>三步开始</h2>
+    <div class="steps-list">
+      <div class="step">
+        <div class="step-num">1</div>
+        <h3>注册账号</h3>
+        <p>快速创建账号，自动生成默认记账空间</p>
+      </div>
+      <div class="step">
+        <div class="step-num">2</div>
+        <h3>邀请成员</h3>
+        <p>将团队成员加入租户，按需分配权限</p>
+      </div>
+      <div class="step">
+        <div class="step-num">3</div>
+        <h3>开始记账</h3>
+        <p>手动录入或拍照识别，随时查看统计报表</p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section class="cta">
+  <div class="container">
+    <div class="cta-box">
+      <h2>开始使用汤圆记账</h2>
+      <p>免费、开源，立即体验多人协作记账的便捷</p>
+      <a href="https://jizhang.zaixianapp.cn" class="btn btn-primary">前往应用</a>
+    </div>
+  </div>
+</section>
+
+<footer>
+  <div class="container">
+    <p>&copy; 2024 汤圆记账 - 简洁高效的多人协作记账工具</p>
+  </div>
+</footer>
+
+</body>
+</html>

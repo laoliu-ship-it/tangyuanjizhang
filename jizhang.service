@@ -1,0 +1,14 @@
+[Unit]
+Description=Tangyuan Jizhang Server
+After=network.target mysql.service
+
+[Service]
+Type=simple
+WorkingDirectory=/opt/jizhang/app
+ExecStart=/opt/jizhang/app/server
+Restart=always
+RestartSec=5
+EnvironmentFile=/opt/jizhang/.env
+
+[Install]
+WantedBy=multi-user.target
