@@ -41,8 +41,19 @@ export default function LLMSettings() {
       setBaseURL(cfg.base_url || '')
       setModel(cfg.model || 'gpt-4o')
       setMode((cfg.mode as 'vision' | 'ocr_text') || 'ocr_text')
-    } catch {
-      setLoadError(true)
+    } catch (err: unknown) {
+      const status = (err as { response?: { status?: number } })?.response?.status
+      const msg = (err as { response?: { data?: { message?: string } } })?.response?.data?.message
+      if (status === 403) {
+        setLoadError(true)
+        // Store specific error for display
+        console.error('LLM config load failed:', msg || `HTTP ${status}`)
+      } else if (status === 401) {
+        alert('登录已过期，请重新登录')
+      } else {
+        console.error('LLM config load failed:', msg || `HTTP ${status}`)
+        setLoadError(true)
+      }
     } finally {
       setLoading(false)
     }
@@ -91,7 +102,8 @@ export default function LLMSettings() {
   if (loadError) {
     return (
       <div className="py-10 text-center">
-        <p className="text-gray-500 mb-4">加载 AI 配置失败，请重试</p>
+        <p className="text-red-500 mb-2 font-medium">权限不足</p>
+        <p className="text-gray-500 mb-4 text-sm">您没有权限查看 AI 配置（仅管理员可用）</p>
         <button
           type="button"
           onClick={loadConfig}

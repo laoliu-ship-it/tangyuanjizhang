@@ -16,9 +16,17 @@ export default function Categories() {
     setLoading(true)
     try {
       const res = await categoryApi.list()
-      setCategories(res.data.data)
-    } catch {
-      alert('加载分类失败')
+      setCategories(res.data.data ?? [])
+    } catch (err: unknown) {
+      const status = (err as { response?: { status?: number } })?.response?.status
+      const msg = (err as { response?: { data?: { message?: string } } })?.response?.data?.message
+      if (status === 403) {
+        alert('权限不足：您没有权限查看分类')
+      } else if (status === 401) {
+        alert('登录已过期，请重新登录')
+      } else {
+        alert(msg || `加载分类失败（HTTP ${status || '未知'}）`)
+      }
     } finally {
       setLoading(false)
     }
@@ -27,6 +35,10 @@ export default function Categories() {
   useEffect(() => {
     loadCategories()
   }, [loadCategories])
+
+  function handleTypeChange(type: 'income' | 'expense') {
+    setAddType(type)
+  }
 
   async function handleAdd(e: React.FormEvent) {
     e.preventDefault()
@@ -74,7 +86,7 @@ export default function Categories() {
           <div className="flex rounded-xl overflow-hidden border border-gray-200">
             <button
               type="button"
-              onClick={() => setAddType('expense')}
+              onClick={() => handleTypeChange('expense')}
               className={`flex-1 py-2 text-sm font-medium transition-colors ${
                 addType === 'expense' ? 'bg-red-500 text-white' : 'bg-white text-gray-500 hover:bg-gray-50'
               }`}
@@ -83,7 +95,7 @@ export default function Categories() {
             </button>
             <button
               type="button"
-              onClick={() => setAddType('income')}
+              onClick={() => handleTypeChange('income')}
               className={`flex-1 py-2 text-sm font-medium transition-colors ${
                 addType === 'income' ? 'bg-green-500 text-white' : 'bg-white text-gray-500 hover:bg-gray-50'
               }`}
@@ -142,44 +154,18 @@ export default function Categories() {
         <div className="text-center py-10 text-gray-400">加载中...</div>
       ) : (
         <>
-          {/* 支出分类 */}
+          {/* 当前类型的分类列表 */}
           <div className="bg-white rounded-2xl shadow-sm border border-gray-100 overflow-hidden">
-            <div className="px-5 py-3 bg-red-50 border-b border-red-100">
-              <span className="text-sm font-medium text-red-600">支出分类（{expenseCategories.length}）</span>
+            <div className={`px-5 py-3 border-b ${addType === 'expense' ? 'bg-red-50 border-red-100' : 'bg-green-50 border-green-100'}`}>
+              <span className={`text-sm font-medium ${addType === 'expense' ? 'text-red-600' : 'text-green-600'}`}>
+                {addType === 'expense' ? '支出' : '收入'}分类（{addType === 'expense' ? expenseCategories.length : incomeCategories.length}）
+              </span>
             </div>
-            {expenseCategories.length === 0 ? (
-              <p className="text-center py-6 text-gray-400 text-sm">暂无支出分类</p>
+            {(addType === 'expense' ? expenseCategories : incomeCategories).length === 0 ? (
+              <p className="text-center py-6 text-gray-400 text-sm">暂无{addType === 'expense' ? '支出' : '收入'}分类</p>
             ) : (
               <ul className="divide-y divide-gray-50">
-                {expenseCategories.map(c => (
-                  <li key={c.id} className="flex items-center justify-between px-5 py-3">
-                    <div className="flex items-center gap-3">
-                      <span className="text-xl">{c.icon || '📌'}</span>
-                      <span className="text-sm font-medium text-gray-700">{c.name}</span>
-                    </div>
-                    <button
-                      onClick={() => handleDelete(c.id)}
-                      disabled={deletingId === c.id}
-                      className="text-sm text-red-500 hover:text-red-700 disabled:opacity-50 transition-colors"
-                    >
-                      {deletingId === c.id ? '删除中' : '删除'}
-                    </button>
-                  </li>
-                ))}
-              </ul>
-            )}
-          </div>
-
-          {/* 收入分类 */}
-          <div className="bg-white rounded-2xl shadow-sm border border-gray-100 overflow-hidden">
-            <div className="px-5 py-3 bg-green-50 border-b border-green-100">
-              <span className="text-sm font-medium text-green-600">收入分类（{incomeCategories.length}）</span>
-            </div>
-            {incomeCategories.length === 0 ? (
-              <p className="text-center py-6 text-gray-400 text-sm">暂无收入分类</p>
-            ) : (
-              <ul className="divide-y divide-gray-50">
-                {incomeCategories.map(c => (
+                {(addType === 'expense' ? expenseCategories : incomeCategories).map(c => (
                   <li key={c.id} className="flex items-center justify-between px-5 py-3">
                     <div className="flex items-center gap-3">
                       <span className="text-xl">{c.icon || '📌'}</span>

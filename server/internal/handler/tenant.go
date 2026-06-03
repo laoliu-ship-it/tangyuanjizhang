@@ -84,7 +84,19 @@ func (h *TenantHandler) Update(c *gin.Context) {
 // InviteMember 邀请成员
 // POST /api/tenants/:id/members
 func (h *TenantHandler) InviteMember(c *gin.Context) {
-	tenantID := middleware.GetTenantID(c)
+	tenantIDStr := c.Param("id")
+	tenantID, err := strconv.ParseUint(tenantIDStr, 10, 64)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, dto.Fail(400, "租户ID格式错误"))
+		return
+	}
+
+	// 验证用户是该租户的成员（Tenant 中间件已校验，此处确保路径与 header 一致）
+	headerTenantID := middleware.GetTenantID(c)
+	if headerTenantID != tenantID {
+		c.JSON(http.StatusBadRequest, dto.Fail(400, "租户ID不匹配"))
+		return
+	}
 
 	var req dto.InviteMemberReq
 	if err := c.ShouldBindJSON(&req); err != nil {

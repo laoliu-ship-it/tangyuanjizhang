@@ -136,11 +136,32 @@ func (r *tenantMemberRepo) GetRole(ctx context.Context, tenantID, userID uint64)
 	return member.Role, nil
 }
 
+func (r *tenantMemberRepo) GetRoleWithID(ctx context.Context, tenantID, userID uint64) (*uint64, string, error) {
+	var member model.TenantMember
+	err := r.db.WithContext(ctx).
+		Where("tenant_id = ? AND user_id = ?", tenantID, userID).
+		First(&member).Error
+	if err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return nil, "", nil
+		}
+		return nil, "", err
+	}
+	return member.RoleID, member.Role, nil
+}
+
 func (r *tenantMemberRepo) UpdateRole(ctx context.Context, tenantID, userID uint64, role string) error {
 	return r.db.WithContext(ctx).
 		Model(&model.TenantMember{}).
 		Where("tenant_id = ? AND user_id = ?", tenantID, userID).
 		Update("role", role).Error
+}
+
+func (r *tenantMemberRepo) UpdateRoleID(ctx context.Context, tenantID, userID uint64, roleID uint64) error {
+	return r.db.WithContext(ctx).
+		Model(&model.TenantMember{}).
+		Where("tenant_id = ? AND user_id = ?", tenantID, userID).
+		Update("role_id", roleID).Error
 }
 
 func (r *tenantMemberRepo) ListMembers(ctx context.Context, tenantID uint64) ([]*model.TenantMember, error) {
@@ -599,4 +620,135 @@ func (r *tenantLLMConfigRepo) GetByTenantID(ctx context.Context, tenantID uint64
 
 func (r *tenantLLMConfigRepo) Save(ctx context.Context, cfg *model.TenantLLMConfig) error {
 	return r.db.WithContext(ctx).Save(cfg).Error
+}
+
+// ========== MediaFileRepo ==========
+
+type mediaFileRepo struct {
+	db *gorm.DB
+}
+
+func NewMediaFileRepo(db *gorm.DB) MediaFileRepo {
+	return &mediaFileRepo{db: db}
+}
+
+func (r *mediaFileRepo) GetByHash(ctx context.Context, tenantID uint64, originalHash string) (*model.MediaFile, error) {
+	var mf model.MediaFile
+	err := r.db.WithContext(ctx).
+		Where("tenant_id = ? AND original_hash = ?", tenantID, originalHash).
+		First(&mf).Error
+	if err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return nil, nil
+		}
+		return nil, err
+	}
+	return &mf, nil
+}
+
+func (r *mediaFileRepo) Create(ctx context.Context, mf *model.MediaFile) error {
+	return r.db.WithContext(ctx).Create(mf).Error
+}
+
+// ========== PlatformAdminRepo ==========
+
+type platformAdminRepo struct {
+	db *gorm.DB
+}
+
+func NewPlatformAdminRepo(db *gorm.DB) PlatformAdminRepo {
+	return &platformAdminRepo{db: db}
+}
+
+func (r *platformAdminRepo) Create(ctx context.Context, admin *model.PlatformAdmin) error {
+	return r.db.WithContext(ctx).Create(admin).Error
+}
+
+func (r *platformAdminRepo) GetByEmail(ctx context.Context, email string) (*model.PlatformAdmin, error) {
+	var admin model.PlatformAdmin
+	err := r.db.WithContext(ctx).Where("email = ? AND deleted_at IS NULL", email).First(&admin).Error
+	if err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return nil, nil
+		}
+		return nil, err
+	}
+	return &admin, nil
+}
+
+func (r *platformAdminRepo) GetByID(ctx context.Context, id uint64) (*model.PlatformAdmin, error) {
+	var admin model.PlatformAdmin
+	err := r.db.WithContext(ctx).Where("id = ? AND deleted_at IS NULL", id).First(&admin).Error
+	if err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return nil, nil
+		}
+		return nil, err
+	}
+	return &admin, nil
+}
+
+// ========== PlatformStatsRepo ==========
+
+type platformStatsRepo struct {
+	db *gorm.DB
+}
+
+func NewPlatformStatsRepo(db *gorm.DB) PlatformStatsRepo {
+	return &platformStatsRepo{db: db}
+}
+
+func (r *platformStatsRepo) CountUsers(ctx context.Context) (int64, error) {
+	var count int64
+	err := r.db.WithContext(ctx).Model(&model.User{}).Where("deleted_at IS NULL").Count(&count).Error
+	return count, err
+}
+
+func (r *platformStatsRepo) CountTenants(ctx context.Context) (int64, error) {
+	var count int64
+	err := r.db.WithContext(ctx).Model(&model.Tenant{}).Where("deleted_at IS NULL").Count(&count).Error
+	return count, err
+}
+
+func (r *platformStatsRepo) CountTransactions(ctx context.Context) (int64, error) {
+	var count int64
+	err := r.db.WithContext(ctx).Model(&model.Transaction{}).Where("deleted_at IS NULL").Count(&count).Error
+	return count, err
+}
+
+func (r *platformStatsRepo) ListUsers(ctx context.Context, keyword string, page, pageSize int) ([]*model.User, int64, error) {
+	query := r.db.WithContext(ctx).Model(&model.User{}).Where("deleted_at IS NULL")
+	if keyword != "" {
+		query = query.Where("username LIKE ? OR email LIKE ?", "%"+keyword+"%", "%"+keyword+"%")
+	}
+	var total int64
+	if err := query.Count(&total).Error; err != nil {
+		return nil, 0, err
+	}
+	var users []*model.User
+	offset := (page - 1) * pageSize
+	err := query.Order("id DESC").Limit(pageSize).Offset(offset).Find(&users).Error
+	return users, total, err
+}
+
+func (r *platformStatsRepo) CountTransactionsByUserID(ctx context.Context, userID uint64) (int64, error) {
+	var count int64
+	err := r.db.WithContext(ctx).Model(&model.Transaction{}).Where("user_id = ? AND deleted_at IS NULL", userID).Count(&count).Error
+	return count, err
+}
+
+func (r *platformStatsRepo) CountMediaByUserID(ctx context.Context, userID uint64) (int64, error) {
+	var count int64
+	err := r.db.WithContext(ctx).
+		Model(&model.MediaFile{}).
+		Joins("JOIN tenant_members ON tenant_members.tenant_id = media_files.tenant_id").
+		Where("tenant_members.user_id = ?", userID).
+		Count(&count).Error
+	return count, err
+}
+
+func (r *platformStatsRepo) CountTenantsByUserID(ctx context.Context, userID uint64) (int64, error) {
+	var count int64
+	err := r.db.WithContext(ctx).Model(&model.TenantMember{}).Where("user_id = ?", userID).Count(&count).Error
+	return count, err
 }

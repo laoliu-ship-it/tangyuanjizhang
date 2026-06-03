@@ -50,7 +50,20 @@ export interface TenantMember {
   username: string
   email: string
   role: string
+  role_id?: number
   joined_at: string
+}
+
+export interface PermissionEntry {
+  resource: string
+  action: string
+}
+
+export interface TenantRole {
+  id: number
+  name: string
+  is_system: boolean
+  permissions: PermissionEntry[]
 }
 
 export interface Category {
@@ -277,17 +290,19 @@ export const statisticsApi = {
 
 // OCR
 export const uploadApi = {
-  ocr: (file: File) => {
+  ocr: (file: File, originalHash?: string) => {
     const form = new FormData()
     form.append('file', file)
-    return api.post<ApiResponse<OcrResult>>('/upload/ocr', form, {
+    if (originalHash) form.append('original_hash', originalHash)
+    return api.post<ApiResponse<OcrResult & { duplicate?: boolean; file_name?: string }>>('/upload/ocr', form, {
       headers: { 'Content-Type': 'multipart/form-data' },
     })
   },
-  ocrAnalyze: (file: File) => {
+  ocrAnalyze: (file: File, originalHash?: string) => {
     const form = new FormData()
     form.append('file', file)
-    return api.post<ApiResponse<OcrAnalyzeResult>>('/upload/ocr/analyze', form, {
+    if (originalHash) form.append('original_hash', originalHash)
+    return api.post<ApiResponse<OcrAnalyzeResult & { duplicate?: boolean; file_name?: string }>>('/upload/ocr/analyze', form, {
       headers: { 'Content-Type': 'multipart/form-data' },
     })
   },
@@ -360,4 +375,18 @@ export const importApi = {
       headers: { 'Content-Type': 'multipart/form-data' },
     })
   },
+}
+
+// RBAC
+export const rbacApi = {
+  listPermissions: () =>
+    api.get<ApiResponse<PermissionEntry[]>>('/permissions'),
+  listRoles: (tenantId: number) =>
+    api.get<ApiResponse<TenantRole[]>>(`/tenants/${tenantId}/roles`),
+  createRole: (tenantId: number, data: { name: string; permissions: PermissionEntry[] }) =>
+    api.post<ApiResponse<TenantRole>>(`/tenants/${tenantId}/roles`, data),
+  updateRole: (tenantId: number, roleId: number, data: { permissions: PermissionEntry[] }) =>
+    api.put<ApiResponse<TenantRole>>(`/tenants/${tenantId}/roles/${roleId}`, data),
+  deleteRole: (tenantId: number, roleId: number) =>
+    api.delete<ApiResponse<null>>(`/tenants/${tenantId}/roles/${roleId}`),
 }

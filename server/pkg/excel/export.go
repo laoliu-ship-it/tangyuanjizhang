@@ -47,8 +47,8 @@ func (e *Exporter) ExportTransactions(items []*dto.TransactionResp) ([]byte, err
 		headerStyle = 0
 	}
 
-	// 写入表头
-	headers := []string{"日期", "类型", "金额", "分类", "备注", "创建时间"}
+	// 写入表头（与导入模板列顺序一致：日期、类型、金额、分类、商户、备注）
+	headers := []string{"日期", "类型", "金额", "分类", "商户", "备注"}
 	cols := []string{"A", "B", "C", "D", "E", "F"}
 	for i, h := range headers {
 		cell := cols[i] + "1"
@@ -64,8 +64,8 @@ func (e *Exporter) ExportTransactions(items []*dto.TransactionResp) ([]byte, err
 		"B": 10, // 类型
 		"C": 12, // 金额
 		"D": 15, // 分类
-		"E": 30, // 备注
-		"F": 22, // 创建时间
+		"E": 15, // 商户
+		"F": 30, // 备注
 	}
 	for col, width := range colWidths {
 		f.SetColWidth(sheet, col, col, width)
@@ -94,17 +94,8 @@ func (e *Exporter) ExportTransactions(items []*dto.TransactionResp) ([]byte, err
 		f.SetCellValue(sheet, fmt.Sprintf("C%d", row), item.Amount)
 		f.SetCellStyle(sheet, fmt.Sprintf("C%d", row), fmt.Sprintf("C%d", row), amountStyle)
 		f.SetCellValue(sheet, fmt.Sprintf("D%d", row), item.CategoryName)
-		f.SetCellValue(sheet, fmt.Sprintf("E%d", row), item.Note)
-		f.SetCellValue(sheet, fmt.Sprintf("F%d", row), item.CreatedAt)
-	}
-
-	// 添加汇总行
-	if len(items) > 0 {
-		summaryRow := len(items) + 2
-		f.SetCellValue(sheet, fmt.Sprintf("A%d", summaryRow), "合计")
-		f.SetCellFormula(sheet, fmt.Sprintf("C%d", summaryRow),
-			fmt.Sprintf("=SUMIF(B2:B%d,\"收入\",C2:C%d)-SUMIF(B2:B%d,\"支出\",C2:C%d)",
-				summaryRow-1, summaryRow-1, summaryRow-1, summaryRow-1))
+		f.SetCellValue(sheet, fmt.Sprintf("E%d", row), item.MerchantName)
+		f.SetCellValue(sheet, fmt.Sprintf("F%d", row), item.Note)
 	}
 
 	buf, err := f.WriteToBuffer()

@@ -6,7 +6,6 @@ import (
 	"io"
 	"net/http"
 	"strconv"
-	"time"
 
 	"fandianjizhang/server/internal/dto"
 	"fandianjizhang/server/internal/middleware"
@@ -39,33 +38,37 @@ func NewExportHandler(
 }
 
 // Excel 导出交易记录为 Excel 文件
-// GET /api/export/excel?start=2024-01-01&end=2024-01-31
+// GET /api/export/excel?start_date=2024-01-01&end_date=2024-01-31&type=expense
 func (h *ExportHandler) Excel(c *gin.Context) {
 	tenantID := middleware.GetTenantID(c)
 
-	start := c.Query("start")
-	end := c.Query("end")
+	start := c.Query("start_date")
+	end := c.Query("end_date")
+	txType := c.Query("type")
 
-	// 默认当月
-	if start == "" {
-		now := time.Now()
-		start = fmt.Sprintf("%d-%02d-01", now.Year(), now.Month())
-	}
-	if end == "" {
-		end = time.Now().Format("2006-01-02")
-	}
-
+	// 前端不传日期时导出全部数据
 	filter := dto.TransactionFilter{
 		StartDate: start,
 		EndDate:   end,
+		Type:      txType,
 		Page:      1,
-		PageSize:  10000,
+		PageSize:  100000,
 	}
+
+	fmt.Printf("[Export] 请求参数: tenantID=%d, start_date=%q, end_date=%q, type=%q\n",
+		tenantID, start, end, txType)
 
 	result, err := h.transactionSvc.List(c.Request.Context(), tenantID, filter)
 	if err != nil {
+		fmt.Printf("[Export] 查询失败: %v\n", err)
 		c.JSON(http.StatusInternalServerError, dto.Fail(500, "查询交易记录失败: "+err.Error()))
 		return
+	}
+
+	fmt.Printf("[Export] 查询结果: total=%d, items=%d\n", result.Total, len(result.Items))
+	if len(result.Items) > 0 {
+		fmt.Printf("[Export] 第一条数据: ID=%d, Date=%q, Amount=%.2f, Type=%q\n",
+			result.Items[0].ID, result.Items[0].TransactionDate, result.Items[0].Amount, result.Items[0].Type)
 	}
 
 	buf, err := h.exporter.ExportTransactions(result.Items)

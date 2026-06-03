@@ -1,25 +1,13 @@
 import { useState, useEffect, useCallback } from 'react'
-import { tenantApi, type TenantMember } from '../../services/api'
+import { tenantApi, rbacApi, type TenantMember, type TenantRole } from '../../services/api'
 import { useTenantStore } from '../../store/tenant'
 import { useAuthStore } from '../../store/auth'
 
 const ROLE_LABELS: Record<string, string> = {
   admin: '管理员',
   finance: '财务',
-  editor: '编辑',
   partner: '合伙人',
-  viewer: '查看者',
 }
-
-const ROLE_DESCRIPTIONS: Record<string, string> = {
-  admin: '全权限：管理成员、分类、商户及所有账目',
-  finance: '记账、编辑、删除账目，查看统计，管理成员',
-  editor: '记账、编辑、删除账目，查看统计',
-  partner: '查看账目、统计明细，不能编辑',
-  viewer: '只读：查看账目和统计',
-}
-
-const ROLE_OPTIONS = ['admin', 'finance', 'editor', 'partner', 'viewer']
 
 export default function Members() {
   const { currentTenantId, tenants } = useTenantStore()
@@ -27,9 +15,10 @@ export default function Members() {
   const currentTenant = tenants.find(t => t.id === currentTenantId)
 
   const [members, setMembers] = useState<TenantMember[]>([])
+  const [roles, setRoles] = useState<TenantRole[]>([])
   const [loading, setLoading] = useState(true)
   const [inviteUsername, setInviteUsername] = useState('')
-  const [inviteRole, setInviteRole] = useState('editor')
+  const [inviteRole, setInviteRole] = useState('finance')
   const [inviting, setInviting] = useState(false)
   const [removingId, setRemovingId] = useState<number | null>(null)
   const [updatingRoleId, setUpdatingRoleId] = useState<number | null>(null)
@@ -40,22 +29,34 @@ export default function Members() {
   // 当前用户是否是账本所有者（只有所有者能修改角色）
   const isOwner = currentTenant?.owner_id === userId
 
-  const loadMembers = useCallback(async () => {
+  const loadData = useCallback(async () => {
     if (!currentTenantId) return
     setLoading(true)
     try {
-      const res = await tenantApi.getMembers(currentTenantId)
-      setMembers(res.data.data)
-    } catch {
-      alert('加载成员列表失败')
+      const [membersRes, rolesRes] = await Promise.all([
+        tenantApi.getMembers(currentTenantId),
+        rbacApi.listRoles(currentTenantId),
+      ])
+      setMembers(membersRes.data.data ?? [])
+      setRoles(rolesRes.data.data ?? [])
+    } catch (err: unknown) {
+      const status = (err as { response?: { status?: number } })?.response?.status
+      const msg = (err as { response?: { data?: { message?: string } } })?.response?.data?.message
+      if (status === 403) {
+        alert('权限不足：您没有权限查看成员列表')
+      } else if (status === 401) {
+        alert('登录已过期，请重新登录')
+      } else {
+        alert(msg || `加载失败（HTTP ${status || '未知'}）`)
+      }
     } finally {
       setLoading(false)
     }
   }, [currentTenantId])
 
   useEffect(() => {
-    loadMembers()
-  }, [loadMembers])
+    loadData()
+  }, [loadData])
 
   async function handleInvite(e: React.FormEvent) {
     e.preventDefault()
@@ -68,7 +69,7 @@ export default function Members() {
     try {
       await tenantApi.addMember(currentTenantId, { username: inviteUsername.trim(), role: inviteRole })
       setInviteUsername('')
-      loadMembers()
+      loadData()
     } catch (err: unknown) {
       const msg = (err as { response?: { data?: { message?: string } } })?.response?.data?.message
       alert(msg || '邀请失败')
@@ -83,7 +84,7 @@ export default function Members() {
     setRemovingId(memberId)
     try {
       await tenantApi.removeMember(currentTenantId, memberId)
-      loadMembers()
+      loadData()
     } catch {
       alert('移除失败')
     } finally {
@@ -124,8 +125,8 @@ export default function Members() {
               onChange={e => setInviteRole(e.target.value)}
               className="px-4 py-2.5 border border-gray-300 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
             >
-              {ROLE_OPTIONS.map(r => (
-                <option key={r} value={r}>{ROLE_LABELS[r]}</option>
+              {roles.map(r => (
+                <option key={r.id} value={r.name}>{ROLE_LABELS[r.name] || r.name}</option>
               ))}
             </select>
             <button
@@ -136,13 +137,6 @@ export default function Members() {
               {inviting ? '邀请中...' : '邀请'}
             </button>
           </form>
-          <div className="mt-3 space-y-1">
-            {Object.entries(ROLE_DESCRIPTIONS).map(([role, desc]) => (
-              <p key={role} className="text-xs text-gray-400">
-                <span className="font-medium text-gray-500">{ROLE_LABELS[role]}：</span>{desc}
-              </p>
-            ))}
-          </div>
         </div>
       )}
 
@@ -189,8 +183,8 @@ export default function Members() {
                         onChange={e => handleRoleChange(m.user_id, e.target.value)}
                         className="px-3 py-1.5 border border-gray-200 rounded-lg text-xs focus:outline-none focus:ring-2 focus:ring-blue-500 bg-white disabled:opacity-50"
                       >
-                        {ROLE_OPTIONS.map(r => (
-                          <option key={r} value={r}>{ROLE_LABELS[r]}</option>
+                        {roles.map(r => (
+                          <option key={r.id} value={r.name}>{ROLE_LABELS[r.name] || r.name}</option>
                         ))}
                       </select>
                     ) : (

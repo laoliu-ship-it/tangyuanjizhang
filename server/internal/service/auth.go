@@ -26,6 +26,11 @@ type Claims struct {
 	jwt.RegisteredClaims
 }
 
+type PlatformClaims struct {
+	AdminID uint64 `json:"admin_id"`
+	jwt.RegisteredClaims
+}
+
 type AuthService interface {
 	Register(ctx context.Context, req dto.RegisterReq) (*dto.LoginResp, error)
 	Login(ctx context.Context, req dto.LoginReq) (*dto.LoginResp, error)

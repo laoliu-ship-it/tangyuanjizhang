@@ -1,11 +1,11 @@
 import { useState, useEffect, useRef, useCallback } from 'react'
 import dayjs from 'dayjs'
 import {
-  categoryApi, merchantApi, transactionApi, uploadApi,
-  type Category, type Merchant, type Transaction, type TransactionCreatePayload, type OcrAnalyzeResult, type LLMSuggestion,
+  categoryApi, merchantApi, transactionApi, uploadApi, llmApi,
+  type Category, type Merchant, type Transaction, type TransactionCreatePayload, type OcrAnalyzeResult, type OcrResult, type LLMSuggestion,
 } from '../services/api'
 import { useResponsive } from '../hooks/useResponsive'
-import { toWebP } from '../utils/imageUtils'
+import { toWebP, fileSHA256, getImageEngineStatus } from '../utils/imageUtils'
 
 // ── 类型定义 ────────────────────────────────────────────────
 interface SlotForm {
@@ -29,6 +29,7 @@ interface ImageSlot {
   imagePath: string
   saved: boolean
   form: SlotForm
+  originalHash?: string
 }
 
 interface SlotDraft {
@@ -101,10 +102,13 @@ export default function TransactionForm({ open, onClose, onSuccess, initialData,
   const [selectedTokens, setSelectedTokens] = useState<Map<string, string>>(new Map()) // key为token原文, value为数值字符串
   const [usedTokens, setUsedTokens] = useState<Set<string>>(new Set()) // 已被右键填入的 OCR token
   const [showReview, setShowReview] = useState(false)
-  const [editingDraftId, setEditingDraftId] = useState<string | null>(null)
+  const [editingDraftIndex, setEditingDraftIndex] = useState<number | null>(null)
+  const [editingDraftForm, setEditingDraftForm] = useState<SlotDraft | null>(null)
   const [toast, setToast] = useState<{ text: string; error?: boolean } | null>(null)
   const [noSlotForm, setNoSlotForm] = useState<SlotForm>(defaultForm())
   const [noSlotDrafts, setNoSlotDrafts] = useState<SlotDraft[]>([])
+  const llmEnabledRef = useRef(false)
+  const submittingRef = useRef(false) // 防抖：防止重复提交
 
   // 当 activeIdx 变化时清空选中和已用标记
   const prevActiveIdxRef = useRef(activeIdx)
@@ -167,7 +171,15 @@ export default function TransactionForm({ open, onClose, onSuccess, initialData,
     setCtxMenu(null)
     ocrQueueRef.current = []
     processingRef.current = false
+    submittingRef.current = false // 重置提交防抖标志
     filesMapRef.current.clear()
+
+    // 加载 LLM 配置，决定是否调用 AI 分析
+    llmApi.getConfig().then(r => {
+      llmEnabledRef.current = r.data.data?.enabled ?? false
+    }).catch(() => {
+      llmEnabledRef.current = false
+    })
 
     if (initialData) {
       const raw = initialData.transaction_date ?? ''
@@ -254,8 +266,26 @@ export default function TransactionForm({ open, onClose, onSuccess, initialData,
         continue
       }
       try {
-        const res = await uploadApi.ocrAnalyze(file!)
-        const ocr = res.data.data
+        let ocr: OcrAnalyzeResult | null = null
+        const slot = slots.find(s => s.id === id)
+        const originalHash = slot?.originalHash
+        if (llmEnabledRef.current) {
+          const res = await uploadApi.ocrAnalyze(file!, originalHash)
+          ocr = res.data.data
+        } else {
+          const res = await uploadApi.ocr(file!, originalHash)
+          const raw = res.data.data as OcrResult
+          // 将 OcrResult 包装成 OcrAnalyzeResult 兼容后续处理
+          ocr = {
+            image_path: raw.image_path,
+            ai_mode: raw.ai_mode,
+            amount: raw.amount,
+            date: raw.date,
+            merchant_id: raw.merchant_id,
+            merchant_name: raw.merchant_name ?? '',
+            raw_texts: raw.raw_texts,
+          }
+        }
         setSlots(prev => prev.map(s => {
           if (s.id !== id) return s
           const form = { ...s.form }
@@ -335,6 +365,30 @@ export default function TransactionForm({ open, onClose, onSuccess, initialData,
   }, [])
 
   // ── 文件选择 ──────────────────────────────────────────────
+
+  /** 逐张转换，如果超限则弹窗确认后降低质量重试 */
+  async function convertFilesWithConfirm(imageFiles: File[]): Promise<File[]> {
+    const engineStatus = getImageEngineStatus()
+    if (engineStatus === 'unavailable') {
+      throw new Error('图片转换不可用：WebAssembly 加载失败')
+    }
+
+    const results: File[] = []
+    for (const file of imageFiles) {
+      let quality = 0.85
+      let result = await toWebP(file, quality)
+      while (result.oversized) {
+        const sizeMB = ((result.size ?? 0) / 1024 / 1024).toFixed(1)
+        const ok = confirm(`"${file.name}" 图片太大（${sizeMB}MB），是否自动压缩后重试？\n（质量将降低约10%）`)
+        if (!ok) throw new Error(`用户取消压缩：${file.name}`)
+        quality = Math.max(0.1, quality - 0.1)
+        result = await toWebP(file, quality)
+      }
+      results.push(result.file!)
+    }
+    return results
+  }
+
   async function handleFilesChange(e: React.ChangeEvent<HTMLInputElement>) {
     const files = Array.from(e.target.files ?? [])
     e.target.value = ''
@@ -342,8 +396,15 @@ export default function TransactionForm({ open, onClose, onSuccess, initialData,
     const imageFiles = files.filter(f => f.type.startsWith('image/'))
     if (imageFiles.length === 0) { alert('请选择图片文件'); return }
 
-    const webpFiles = await Promise.all(imageFiles.map(f => toWebP(f)))
-    const newSlots: ImageSlot[] = webpFiles.map(f => ({
+    const hashes = await Promise.all(imageFiles.map(f => fileSHA256(f)))
+    let webpFiles: File[]
+    try {
+      webpFiles = await convertFilesWithConfirm(imageFiles)
+    } catch (err: unknown) {
+      alert(err instanceof Error ? err.message : '转换失败')
+      return
+    }
+    const newSlots: ImageSlot[] = webpFiles.map((f, i) => ({
       id: newSlotId(),
       file: f,
       previewUrl: URL.createObjectURL(f),
@@ -352,6 +413,7 @@ export default function TransactionForm({ open, onClose, onSuccess, initialData,
       imagePath: '',
       saved: false,
       form: defaultForm(),
+      originalHash: hashes[i],
     }))
 
     // 同步写入 files map，processQueue 能立即读到文件
@@ -372,10 +434,18 @@ export default function TransactionForm({ open, onClose, onSuccess, initialData,
     const files = Array.from(e.dataTransfer.files)
     const imageFiles = files.filter(f => f.type.startsWith('image/'))
     if (imageFiles.length === 0) return
-    const webpFiles = await Promise.all(imageFiles.map(f => toWebP(f)))
-    const newSlots: ImageSlot[] = webpFiles.map(f => ({
+    const hashes = await Promise.all(imageFiles.map(f => fileSHA256(f)))
+    let webpFiles: File[]
+    try {
+      webpFiles = await convertFilesWithConfirm(imageFiles)
+    } catch (err: unknown) {
+      alert(err instanceof Error ? err.message : '转换失败')
+      return
+    }
+    const newSlots: ImageSlot[] = webpFiles.map((f, i) => ({
       id: newSlotId(), file: f, previewUrl: URL.createObjectURL(f),
       status: 'pending' as SlotStatus, ocrResult: null, imagePath: '', saved: false, form: defaultForm(),
+      originalHash: hashes[i],
     }))
     newSlots.forEach(s => filesMapRef.current.set(s.id, s.file))
     setSlots(prev => {
@@ -547,9 +617,13 @@ export default function TransactionForm({ open, onClose, onSuccess, initialData,
     patchForm({ amount: '', note: '', merchantId: 0, merchantName: '' })
   }
 
-  // ── 新增模式：批量保存当前 slot 的所有草稿 ──────────────────
+  // ── 新增模式：批量保存当前 slot 的所有草稿（带防抖）──────────
   async function handleBatchSave() {
+    // 防抖：如果正在提交中，直接返回
+    if (submittingRef.current) return
     if (currentDrafts.length === 0) return
+    
+    submittingRef.current = true
     setSaving(true)
     const ocr = activeSlot?.ocrResult ?? null
     const draftsToSave = currentDrafts
@@ -572,10 +646,10 @@ export default function TransactionForm({ open, onClose, onSuccess, initialData,
         await transactionApi.create(payload)
       }
       const count = draftsToSave.length
-      setToast({ text: `✓ 已提交 ${count} 笔` })
+      setToast({ text: `✓ 成功提交 ${count} 笔交易` })
       onSuccess?.()
-      // 手机端延迟关闭让 Toast 可见，PC 端即时关闭
-      const closeDelay = isMobile ? 1200 : 0
+      // 手机端延迟关闭让 Toast 可见，PC 端也确保提示可见
+      const closeDelay = isMobile ? 1500 : 2000
       if (!activeSlot) {
         setNoSlotDrafts([])
         setTimeout(() => { setToast(null); onClose() }, closeDelay)
@@ -583,19 +657,22 @@ export default function TransactionForm({ open, onClose, onSuccess, initialData,
         setSlots(prev => prev.map((s, i) => i === activeIdx ? { ...s, saved: true } : s))
         const nextIdx = slots.findIndex((s, i) => i !== activeIdx && !s.saved)
         if (nextIdx >= 0) {
-          setTimeout(() => setToast(null), closeDelay || 2500)
+          setTimeout(() => setToast(null), closeDelay)
           setActiveIdx(nextIdx)
         } else {
           const allSaved = slots.every((s, i) => i === activeIdx || s.saved)
           if (allSaved) setTimeout(() => { setToast(null); onClose() }, closeDelay)
-          else setTimeout(() => setToast(null), closeDelay || 2500)
+          else setTimeout(() => setToast(null), closeDelay)
         }
       }
     } catch (err: unknown) {
       const msg = (err as { response?: { data?: { message?: string } } })?.response?.data?.message
       setToast({ text: msg || '保存失败，请稍后重试', error: true })
     }
-    finally { setSaving(false) }
+    finally { 
+      setSaving(false)
+      submittingRef.current = false
+    }
   }
 
   // ── 新增模式：点击完成 ─────────────────────────────────────
@@ -627,18 +704,41 @@ export default function TransactionForm({ open, onClose, onSuccess, initialData,
     }
   }
 
-  // ── 更新草稿（内联编辑时同步）────────────────────────────────
-  function updateDraft(draftId: string, patch: Partial<SlotDraft>) {
+  // ── 编辑弹窗：打开 ────────────────────────────────────────
+  function openEditDraft(index: number) {
+    const draft = currentDrafts[index]
+    if (!draft) return
+    setEditingDraftIndex(index)
+    setEditingDraftForm({ ...draft })
+  }
+
+  // ── 编辑弹窗：保存 ────────────────────────────────────────
+  function saveEditDraft() {
+    if (editingDraftForm === null || editingDraftIndex === null) return
+    const idx = editingDraftIndex
+    const form = editingDraftForm
+    const cat = categories.find(c => c.id === form.categoryId)
+    const updated: SlotDraft = {
+      ...form,
+      categoryName: cat?.name ?? form.categoryName,
+    }
     if (activeSlot) {
       setDrafts(prev => {
         const next = new Map(prev)
-        const list = (next.get(activeSlot.id) ?? []).map(d => d.id === draftId ? { ...d, ...patch } : d)
+        const list = (next.get(activeSlot.id) ?? []).map((d, i) => i === idx ? updated : d)
         next.set(activeSlot.id, list)
         return next
       })
     } else {
-      setNoSlotDrafts(prev => prev.map(d => d.id === draftId ? { ...d, ...patch } : d))
+      setNoSlotDrafts(prev => prev.map((d, i) => i === idx ? updated : d))
     }
+    closeEditDraft()
+  }
+
+  // ── 编辑弹窗：关闭 ────────────────────────────────────────
+  function closeEditDraft() {
+    setEditingDraftIndex(null)
+    setEditingDraftForm(null)
   }
 
   // ── 右键菜单 — 只保留 ESC 关闭，关闭改用透明遮罩实现 ─────────
@@ -727,9 +827,9 @@ export default function TransactionForm({ open, onClose, onSuccess, initialData,
   const isRecognizing = activeSlot?.status === 'recognizing'
   const filteredCats = categories.filter(c => c.type === form.type)
   const isEditMode = !!initialData
-  const showDraftsCol = !isEditMode && currentDrafts.length > 0 && !isMobile
-  const modalWidth = showDraftsCol ? 'max-w-6xl' : 'max-w-5xl'
-  const colWidth = showDraftsCol ? 'w-1/5' : 'w-1/4'
+  // 统一列表在 OCR 栏内，不再需要独立的草稿列
+  const modalWidth = 'max-w-5xl'
+  const colWidth = 'w-1/4'
 
   // ── 缩略图条 ─────────────────────────────────────────────
   const ThumbnailStrip = !isEditMode && (
@@ -875,7 +975,7 @@ export default function TransactionForm({ open, onClose, onSuccess, initialData,
                 try {
                   const blob = await fetch(slot.previewUrl).then(r => r.blob())
                   const file = new File([blob], 'reocr.jpg', { type: blob.type || 'image/jpeg' })
-                  const res = await uploadApi.ocrAnalyze(file)
+                  const res = await uploadApi.ocrAnalyze(file, slot.originalHash)
                   const ocr = res.data.data
                   setSlots(prev => prev.map((s, i) => {
                     if (i !== activeIdx) return s
@@ -943,58 +1043,108 @@ export default function TransactionForm({ open, onClose, onSuccess, initialData,
                 </button>
               </div>
             )}
-            {ocrResult.llm && ocrResult.llm.length > 0 && (
-              <div className="mb-3 space-y-2">
-                <div className="flex items-center justify-between px-1">
-                  <span className="text-sm font-semibold text-gray-700">AI 建议 · {ocrResult.llm.length} 笔</span>
-                  {ocrResult.llm.length > 1 && <span className="text-xs text-gray-400">已自动生成草稿</span>}
+            {/* ── 统一列表：AI 建议 + 已暂存草稿 ──────────────────── */}
+            {((ocrResult.llm && ocrResult.llm.length > 0) || currentDrafts.length > 0) && (
+              <div className="mb-3">
+                <div className="flex items-center justify-between px-1 mb-2">
+                  <span className="text-sm font-semibold text-gray-700">
+                    {currentDrafts.length > 0
+                      ? `已暂存 ${currentDrafts.length} 笔`
+                      : `AI 建议 · ${(ocrResult.llm ?? []).length} 笔`}
+                  </span>
+                  {currentDrafts.length > 0 && (
+                    <span className="text-xs text-gray-400">点击编辑或确认</span>
+                  )}
                 </div>
-                {ocrResult.llm.map((llm, i) => {
-                  const filled = filledLlmIndices.has(i)
-                  const cat = categories.find(c => c.id === llm.category_id)
+
+                {/* 已暂存的草稿列表 */}
+                {currentDrafts.map((draft, di) => {
+                  const catIcon = categories.find(c => c.id === draft.categoryId)?.icon ?? (draft.type === 'income' ? '💰' : '💸')
                   return (
                     <div
-                      key={i}
-                      className="bg-white rounded-xl p-3 shadow-sm border border-gray-100 transition-all hover:shadow-md hover:border-indigo-200"
+                      key={draft.id}
+                      className="flex items-center gap-2.5 bg-white rounded-xl p-3 shadow-sm border border-gray-100 mb-2 hover:border-blue-200 transition-colors"
                     >
-                      <div className="flex items-center gap-2">
-                        {/* 分类图标 */}
-                        <span className="text-xl flex-shrink-0">{cat?.icon ?? (llm.type === 'income' ? '💰' : '💸')}</span>
-                        <div className="flex-1 min-w-0">
-                          <div className="flex items-center justify-between">
-                            <div className="min-w-0">
-                              {/* 分类名 */}
-                              <span className="text-sm font-medium text-gray-800 truncate">
-                                {cat?.name ?? llm.category_hint ?? '未分类'}
-                              </span>
-                              {llm.merchant_name && (
-                                <span className="text-xs ml-1 text-gray-500">
-                                  · {llm.merchant_name}
-                                </span>
-                              )}
-                            </div>
-                            {/* 金额 */}
-                            <span className={`text-sm font-bold ml-2 flex-shrink-0 ${llm.type === 'income' ? 'text-green-600' : 'text-red-600'}`}>
-                              {llm.type === 'income' ? '+' : '-'}¥{(llm.amount ?? 0).toFixed(2)}
+                      <span className="text-xl flex-shrink-0">{catIcon}</span>
+                      <div className="flex-1 min-w-0">
+                        <div className="flex items-center justify-between">
+                          <div className="min-w-0">
+                            <span className="text-sm font-medium text-gray-800 truncate">
+                              {draft.categoryName || '未分类'}
                             </span>
+                            {draft.merchantName && (
+                              <span className="text-xs ml-1 text-gray-500">· {draft.merchantName}</span>
+                            )}
                           </div>
-                          {/* 底部：日期 + 备注 */}
-                          <div className="flex items-center justify-between mt-1">
-                            <span className="text-xs text-gray-400">
-                              {llm.date || ''}
-                              {llm.note && ` · ${llm.note}`}
-                            </span>
+                          <span className={`text-sm font-bold ml-2 flex-shrink-0 ${draft.type === 'income' ? 'text-green-600' : 'text-red-600'}`}>
+                            {draft.type === 'income' ? '+' : '-'}¥{draft.amount.toFixed(2)}
+                          </span>
+                        </div>
+                        <div className="flex items-center justify-between mt-0.5">
+                          <span className="text-xs text-gray-400">
+                            {draft.date.slice(0, 16).replace('T', ' ')}
+                            {draft.note && ` · ${draft.note}`}
+                          </span>
+                          <div className="flex items-center gap-1 flex-shrink-0">
                             <button
                               type="button"
-                              disabled={filled}
-                              onClick={() => applyLLMSuggestion(llm, i)}
-                              className={`text-xs px-2.5 py-1 rounded-lg font-medium flex-shrink-0 ${
-                                filled ? 'bg-green-100 text-green-700 cursor-default' : 'bg-indigo-500 hover:bg-indigo-600 text-white'
-                              }`}
+                              onClick={() => openEditDraft(di)}
+                              className="text-xs px-2 py-1 rounded-lg bg-blue-50 text-blue-600 hover:bg-blue-100 transition-colors"
                             >
-                              {filled ? '✓ 已填入' : '填入'}
+                              编辑
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => removeDraft(di)}
+                              className="text-xs px-2 py-1 rounded-lg bg-gray-50 text-gray-500 hover:bg-red-50 hover:text-red-500 transition-colors"
+                            >
+                              删除
                             </button>
                           </div>
+                        </div>
+                      </div>
+                    </div>
+                  )
+                })}
+
+                {/* 尚未接受的 AI 建议（仅当有 LLM 建议且存在未填入的条目时显示） */}
+                {ocrResult.llm && ocrResult.llm.map((llm, i) => {
+                  const filled = filledLlmIndices.has(i)
+                  if (filled) return null  // 已接受的不再重复显示
+                  const cat = categories.find(c => c.id === llm.category_id)
+                  const catIcon = cat?.icon ?? (llm.type === 'income' ? '💰' : '💸')
+                  return (
+                    <div
+                      key={`llm_${i}`}
+                      className="flex items-center gap-2.5 bg-white rounded-xl p-3 shadow-sm border border-gray-100 mb-2 hover:border-indigo-200 transition-colors"
+                    >
+                      <span className="text-xl flex-shrink-0">{catIcon}</span>
+                      <div className="flex-1 min-w-0">
+                        <div className="flex items-center justify-between">
+                          <div className="min-w-0">
+                            <span className="text-sm font-medium text-gray-800 truncate">
+                              {cat?.name ?? llm.category_hint ?? '未分类'}
+                            </span>
+                            {llm.merchant_name && (
+                              <span className="text-xs ml-1 text-gray-500">· {llm.merchant_name}</span>
+                            )}
+                          </div>
+                          <span className={`text-sm font-bold ml-2 flex-shrink-0 ${llm.type === 'income' ? 'text-green-600' : 'text-red-600'}`}>
+                            {llm.type === 'income' ? '+' : '-'}¥{(llm.amount ?? 0).toFixed(2)}
+                          </span>
+                        </div>
+                        <div className="flex items-center justify-between mt-0.5">
+                          <span className="text-xs text-gray-400">
+                            {llm.date || ''}
+                            {llm.note && ` · ${llm.note}`}
+                          </span>
+                          <button
+                            type="button"
+                            onClick={() => applyLLMSuggestion(llm, i)}
+                            className="text-xs px-3 py-1 rounded-lg bg-indigo-500 hover:bg-indigo-600 text-white transition-colors"
+                          >
+                            接受
+                          </button>
                         </div>
                       </div>
                     </div>
@@ -1300,121 +1450,27 @@ export default function TransactionForm({ open, onClose, onSuccess, initialData,
               {saving ? '保存中…' : isRecognizing ? '识别中…' : '保存'}
             </button>
           ) : (
-            <div className="space-y-2">
-              {/* 草稿列表（可点选编辑） */}
-              {currentDrafts.length > 0 && (
-                <div className="border border-blue-100 rounded-xl overflow-hidden">
-                  <div className="flex items-center gap-1.5 px-3 py-1.5 bg-blue-50">
-                    <span className="w-1.5 h-1.5 rounded-full bg-blue-500 animate-pulse" />
-                    <span className="text-xs text-blue-600 font-medium flex-1">已暂存 {currentDrafts.length} 笔，点击可修改</span>
-                  </div>
-                  {currentDrafts.map((draft, di) => {
-                    const isEditing = editingDraftId === draft.id
-                    return (
-                      <div key={draft.id} className="border-t border-blue-50">
-                        {/* 摘要行 */}
-                        <button
-                          type="button"
-                          onClick={() => setEditingDraftId(isEditing ? null : draft.id)}
-                          className="w-full flex items-center gap-2 px-3 py-2 text-left hover:bg-gray-50 transition-colors"
-                        >
-                          <span className={`text-xs px-1.5 py-0.5 rounded font-medium ${draft.type === 'income' ? 'bg-green-100 text-green-700' : 'bg-red-100 text-red-700'}`}>
-                            {draft.type === 'income' ? '收' : '支'}
-                          </span>
-                          <span className="text-sm font-semibold text-gray-800 w-16 shrink-0">¥{draft.amount}</span>
-                          <span className="text-xs text-gray-500 flex-1 truncate">{draft.merchantName || draft.categoryName || draft.note || '—'}</span>
-                          <span className="text-gray-400 text-xs">{isEditing ? '▲' : '▼'}</span>
-                          <button
-                            type="button"
-                            onClick={e => { e.stopPropagation(); removeDraft(di) }}
-                            className="text-gray-300 hover:text-red-400 text-sm leading-none ml-1"
-                          >×</button>
-                        </button>
-                        {/* 展开编辑区 */}
-                        {isEditing && (
-                          <div className="px-3 pb-3 space-y-2 bg-gray-50">
-                            <div className="flex gap-2">
-                              <button
-                                type="button"
-                                onClick={() => updateDraft(draft.id, { type: 'expense' })}
-                                className={`flex-1 py-1 rounded-lg text-xs font-medium border transition-colors ${draft.type === 'expense' ? 'bg-red-500 text-white border-red-500' : 'border-gray-200 text-gray-600'}`}
-                              >支出</button>
-                              <button
-                                type="button"
-                                onClick={() => updateDraft(draft.id, { type: 'income' })}
-                                className={`flex-1 py-1 rounded-lg text-xs font-medium border transition-colors ${draft.type === 'income' ? 'bg-green-500 text-white border-green-500' : 'border-gray-200 text-gray-600'}`}
-                              >收入</button>
-                            </div>
-                            <input
-                              type="number"
-                              value={draft.amount || ''}
-                              onChange={e => updateDraft(draft.id, { amount: parseFloat(e.target.value) || 0 })}
-                              placeholder="金额"
-                              className="w-full px-2 py-1.5 border border-gray-200 rounded-lg text-sm focus:outline-none focus:ring-1 focus:ring-blue-400"
-                            />
-                            <input
-                              type="text"
-                              value={draft.merchantName}
-                              onChange={e => updateDraft(draft.id, { merchantName: e.target.value, merchantId: 0 })}
-                              placeholder="商户名称"
-                              className="w-full px-2 py-1.5 border border-gray-200 rounded-lg text-sm focus:outline-none focus:ring-1 focus:ring-blue-400"
-                            />
-                            <select
-                              value={draft.categoryId || ''}
-                              onChange={e => {
-                                const cid = Number(e.target.value)
-                                const cat = categories.find(c => c.id === cid)
-                                updateDraft(draft.id, { categoryId: cid, categoryName: cat?.name ?? '' })
-                              }}
-                              className="w-full px-2 py-1.5 border border-gray-200 rounded-lg text-sm focus:outline-none focus:ring-1 focus:ring-blue-400 bg-white"
-                            >
-                              <option value="">选择分类</option>
-                              {categories.filter(c => c.type === draft.type).map(c => (
-                                <option key={c.id} value={c.id}>{c.name}</option>
-                              ))}
-                            </select>
-                            <input
-                              type="text"
-                              value={draft.note}
-                              onChange={e => updateDraft(draft.id, { note: e.target.value })}
-                              placeholder="备注"
-                              className="w-full px-2 py-1.5 border border-gray-200 rounded-lg text-sm focus:outline-none focus:ring-1 focus:ring-blue-400"
-                            />
-                            <input
-                              type="datetime-local"
-                              value={draft.date}
-                              onChange={e => updateDraft(draft.id, { date: e.target.value })}
-                              className="w-full px-2 py-1.5 border border-gray-200 rounded-lg text-sm focus:outline-none focus:ring-1 focus:ring-blue-400"
-                            />
-                          </div>
-                        )}
-                      </div>
-                    )
-                  })}
-                </div>
-              )}
-              <div className="flex gap-2">
-                <button
-                  type="button"
-                  onClick={handleAddDraft}
-                  disabled={saving || isRecognizing || (form.type === 'expense' && !activeSlot)}
-                  className="flex-1 py-2.5 font-semibold rounded-xl transition-colors text-sm bg-white border border-blue-200 text-blue-600 hover:bg-blue-50 disabled:border-gray-200 disabled:text-gray-400"
-                >
-                  {isRecognizing ? '识别中…' : '记一笔'}
-                </button>
-                <button
-                  type="button"
-                  onClick={handleCompleteClick}
-                  disabled={saving || isRecognizing || currentDrafts.length === 0}
-                  className={`flex-1 py-2.5 font-semibold rounded-xl transition-colors text-sm text-white ${
-                    currentDrafts.length > 0
-                      ? 'bg-blue-600 hover:bg-blue-700 disabled:bg-blue-300'
-                      : 'bg-gray-300'
-                  }`}
-                >
-                  {saving ? '提交中…' : currentDrafts.length > 0 ? `完成 ${currentDrafts.length} 笔` : '完成'}
-                </button>
-              </div>
+            <div className="flex gap-2">
+              <button
+                type="button"
+                onClick={handleAddDraft}
+                disabled={saving || isRecognizing || (form.type === 'expense' && !activeSlot)}
+                className="flex-1 py-2.5 font-semibold rounded-xl transition-colors text-sm bg-white border border-blue-200 text-blue-600 hover:bg-blue-50 disabled:border-gray-200 disabled:text-gray-400"
+              >
+                {isRecognizing ? '识别中…' : '记一笔'}
+              </button>
+              <button
+                type="button"
+                onClick={handleCompleteClick}
+                disabled={saving || isRecognizing || currentDrafts.length === 0}
+                className={`flex-1 py-2.5 font-semibold rounded-xl transition-colors text-sm text-white ${
+                  currentDrafts.length > 0
+                    ? 'bg-blue-600 hover:bg-blue-700 disabled:bg-blue-300'
+                    : 'bg-gray-300'
+                }`}
+              >
+                {saving ? '提交中…' : currentDrafts.length > 0 ? `完成 ${currentDrafts.length} 笔` : '完成'}
+              </button>
             </div>
           )}
 
@@ -1455,37 +1511,6 @@ export default function TransactionForm({ open, onClose, onSuccess, initialData,
         ))}
       </div>
     </>
-  ) : null
-
-  // ── 草稿列表栏（第 4 列，PC 多笔时显示）──────────────────────
-  const DraftsCol = showDraftsCol ? (
-    <div className="w-1/5 flex-shrink-0 flex flex-col border-r border-gray-100 overflow-hidden">
-      <div className="px-4 pt-4 pb-2 flex-shrink-0 border-b border-gray-50">
-        <span className="text-sm font-medium text-gray-700">已暂存 {currentDrafts.length} 笔</span>
-      </div>
-      <div className="flex-1 overflow-y-auto p-3 space-y-2">
-        {currentDrafts.map((d, i) => (
-          <div key={d.id} className="bg-gray-50 rounded-xl p-2.5 space-y-1">
-            <div className="flex items-center justify-between">
-              <span className={`text-sm font-bold ${d.type === 'income' ? 'text-green-600' : 'text-red-600'}`}>
-                {d.type === 'income' ? '+' : '-'}¥{d.amount.toFixed(2)}
-              </span>
-              <button
-                type="button"
-                onClick={() => removeDraft(i)}
-                className="text-gray-400 hover:text-red-500 text-sm leading-none"
-              >✕</button>
-            </div>
-            <p className="text-xs text-gray-600 truncate">
-              {categories.find(c => c.id === d.categoryId)?.icon ?? ''} {d.categoryName}
-            </p>
-            {d.merchantName && <p className="text-xs text-gray-400 truncate">{d.merchantName}</p>}
-            {d.note && <p className="text-xs text-gray-400 truncate">{d.note}</p>}
-            <p className="text-xs text-gray-300">{d.date.replace('T', ' ')}</p>
-          </div>
-        ))}
-      </div>
-    </div>
   ) : null
 
   // ── 手机端底部抽屉（核验草稿后提交）────────────────────────
@@ -1557,6 +1582,114 @@ export default function TransactionForm({ open, onClose, onSuccess, initialData,
               {saving ? '提交中…' : `确认提交 ${currentDrafts.length} 笔`}
             </button>
           </div>
+        </div>
+      </div>
+    </div>
+  ) : null
+
+  // ─ 草稿编辑弹窗 ────────────────────────────────────────────
+  const DraftEditModal = editingDraftForm !== null && editingDraftIndex !== null ? (
+    <div className="fixed inset-0 bg-black/60 z-[70] flex items-center justify-center p-6" onClick={closeEditDraft}>
+      <div
+        className="bg-white rounded-2xl shadow-2xl w-full max-w-md"
+        onClick={e => e.stopPropagation()}
+      >
+        <div className="flex items-center justify-between px-5 py-3 border-b border-gray-100">
+          <h3 className="text-base font-semibold text-gray-800">编辑记账</h3>
+          <button onClick={closeEditDraft} className="p-1.5 rounded-full hover:bg-gray-100 text-gray-500">
+            <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+            </svg>
+          </button>
+        </div>
+        <div className="p-5 space-y-3">
+          {/* 收入/支出 */}
+          <div className="flex rounded-xl overflow-hidden border border-gray-200">
+            {(['expense', 'income'] as const).map(t => (
+              <button key={t} type="button"
+                onClick={() => setEditingDraftForm({ ...editingDraftForm, type: t, categoryId: 0 })}
+                className={`flex-1 py-2 text-sm font-medium transition-colors ${
+                  editingDraftForm.type === t
+                    ? t === 'expense' ? 'bg-red-500 text-white' : 'bg-green-500 text-white'
+                    : 'bg-white text-gray-500 hover:bg-gray-50'
+                }`}
+              >
+                {t === 'expense' ? '支出' : '收入'}
+              </button>
+            ))}
+          </div>
+
+          {/* 金额 */}
+          <div className="relative">
+            <span className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400 font-medium text-sm">¥</span>
+            <input type="number" step="0.01" min="0.01"
+              value={editingDraftForm.amount}
+              onChange={e => setEditingDraftForm({ ...editingDraftForm, amount: parseFloat(e.target.value) || 0 })}
+              className="w-full pl-7 pr-3 py-2.5 border border-gray-200 rounded-xl text-lg font-bold focus:outline-none focus:ring-2 focus:ring-blue-500"
+            />
+          </div>
+
+          {/* 商户 */}
+          <div>
+            <p className="text-xs text-gray-500 mb-1">商户</p>
+            <input type="text"
+              value={editingDraftForm.merchantName}
+              onChange={e => setEditingDraftForm({ ...editingDraftForm, merchantName: e.target.value, merchantId: 0 })}
+              placeholder="输入商户名称（可选）"
+              className={inputCls}
+            />
+          </div>
+
+          {/* 分类 */}
+          <div>
+            <p className="text-xs text-gray-500 mb-1.5">分类</p>
+            <div className="grid grid-cols-4 gap-1.5">
+              {categories.filter(c => c.type === editingDraftForm.type).map(cat => (
+                <button key={cat.id} type="button"
+                  onClick={() => setEditingDraftForm({ ...editingDraftForm, categoryId: cat.id })}
+                  className={`flex flex-col items-center gap-0.5 p-1.5 rounded-xl border text-xs transition-colors ${
+                    editingDraftForm.categoryId === cat.id
+                      ? 'border-blue-500 bg-blue-50 text-blue-600'
+                      : 'border-gray-200 hover:bg-gray-50 text-gray-600'
+                  }`}
+                >
+                  <span className="text-lg">{cat.icon || '📌'}</span>
+                  <span className="truncate w-full text-center" style={{ fontSize: '10px' }}>{cat.name}</span>
+                </button>
+              ))}
+            </div>
+          </div>
+
+          {/* 备注 */}
+          <div>
+            <p className="text-xs text-gray-500 mb-1">备注</p>
+            <input type="text"
+              value={editingDraftForm.note}
+              onChange={e => setEditingDraftForm({ ...editingDraftForm, note: e.target.value })}
+              placeholder="添加备注（可选）"
+              className={inputCls}
+            />
+          </div>
+
+          {/* 日期时间 */}
+          <div>
+            <p className="text-xs text-gray-500 mb-1">日期时间</p>
+            <input type="datetime-local"
+              value={editingDraftForm.date}
+              onChange={e => setEditingDraftForm({ ...editingDraftForm, date: e.target.value })}
+              className={inputCls}
+            />
+          </div>
+        </div>
+        <div className="flex gap-3 px-5 py-3 border-t border-gray-100">
+          <button type="button" onClick={closeEditDraft}
+            className="flex-1 py-2.5 text-sm text-gray-600 bg-gray-100 hover:bg-gray-200 rounded-xl transition-colors">
+            取消
+          </button>
+          <button type="button" onClick={saveEditDraft}
+            className="flex-1 py-2.5 text-sm font-semibold bg-blue-600 hover:bg-blue-700 text-white rounded-xl transition-colors">
+            保存
+          </button>
         </div>
       </div>
     </div>
@@ -1733,7 +1866,7 @@ export default function TransactionForm({ open, onClose, onSuccess, initialData,
   // ── PC 新增/编辑布局（三/四栏：图片、OCR、[草稿]、表单）────────
   return (
     <>
-      {Toast}{Lightbox}{CtxMenuEl}{ReviewModal}
+      {Toast}{Lightbox}{CtxMenuEl}{ReviewModal}{DraftEditModal}
       <div
         className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-6"
         onClick={e => { if (e.target === e.currentTarget) onClose() }}
@@ -1754,7 +1887,6 @@ export default function TransactionForm({ open, onClose, onSuccess, initialData,
           <div className="flex flex-1 overflow-hidden">
             {ImageCol}
             {OcrCol}
-            {DraftsCol}
             {FormCol}
           </div>
         </div>

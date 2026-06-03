@@ -28,7 +28,9 @@ type TenantMemberRepo interface {
 	Add(ctx context.Context, member *model.TenantMember) error
 	Remove(ctx context.Context, tenantID, userID uint64) error
 	GetRole(ctx context.Context, tenantID, userID uint64) (string, error)
+	GetRoleWithID(ctx context.Context, tenantID, userID uint64) (*uint64, string, error)
 	UpdateRole(ctx context.Context, tenantID, userID uint64, role string) error
+	UpdateRoleID(ctx context.Context, tenantID, userID uint64, roleID uint64) error
 	ListMembers(ctx context.Context, tenantID uint64) ([]*model.TenantMember, error)
 }
 
@@ -76,4 +78,47 @@ type TenantLLMConfigRepo interface {
 	GetByTenantID(ctx context.Context, tenantID uint64) (*model.TenantLLMConfig, error)
 	// Save 创建或更新（upsert）租户配置
 	Save(ctx context.Context, cfg *model.TenantLLMConfig) error
+}
+
+// TenantRoleRepo 租户角色数据仓库接口
+type TenantRoleRepo interface {
+	Create(ctx context.Context, role *model.TenantRole) error
+	GetByID(ctx context.Context, id uint64) (*model.TenantRole, error)
+	GetByName(ctx context.Context, tenantID uint64, name string) (*model.TenantRole, error)
+	ListByTenant(ctx context.Context, tenantID uint64) ([]*model.TenantRole, error)
+	Update(ctx context.Context, role *model.TenantRole) error
+	Delete(ctx context.Context, id uint64) error
+}
+
+// RolePermissionRepo 角色权限数据仓库接口
+type RolePermissionRepo interface {
+	Create(ctx context.Context, perm *model.RolePermission) error
+	BatchCreate(ctx context.Context, perms []*model.RolePermission) error
+	DeleteByRoleID(ctx context.Context, roleID uint64) error
+	ListByRoleID(ctx context.Context, roleID uint64) ([]*model.RolePermission, error)
+	ListByTenantID(ctx context.Context, tenantID uint64) ([]*model.RolePermission, error)
+}
+
+// MediaFileRepo 媒体文件数据仓库接口（用于去重和资源统计）
+type MediaFileRepo interface {
+	GetByHash(ctx context.Context, tenantID uint64, originalHash string) (*model.MediaFile, error)
+	Create(ctx context.Context, mf *model.MediaFile) error
+}
+
+// PlatformAdminRepo 平台管理员数据仓库接口
+type PlatformAdminRepo interface {
+	Create(ctx context.Context, admin *model.PlatformAdmin) error
+	GetByEmail(ctx context.Context, email string) (*model.PlatformAdmin, error)
+	GetByID(ctx context.Context, id uint64) (*model.PlatformAdmin, error)
+}
+
+// PlatformStatsRepo 平台统计查询接口（跨租户）
+type PlatformStatsRepo interface {
+	CountUsers(ctx context.Context) (int64, error)
+	CountTenants(ctx context.Context) (int64, error)
+	CountTransactions(ctx context.Context) (int64, error)
+	ListUsers(ctx context.Context, keyword string, page, pageSize int) ([]*model.User, int64, error)
+	CountTransactionsByUserID(ctx context.Context, userID uint64) (int64, error)
+	CountMediaByUserID(ctx context.Context, userID uint64) (int64, error)
+	CountTenantsByUserID(ctx context.Context, userID uint64) (int64, error)
 }

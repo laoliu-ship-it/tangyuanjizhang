@@ -54,7 +54,7 @@ type UpdateTenantReq struct {
 
 type InviteMemberReq struct {
 	Username string `json:"username" binding:"required,min=2,max=50"`
-	Role     string `json:"role" binding:"required,oneof=admin editor viewer partner finance"`
+	Role     string `json:"role" binding:"required,min=1,max=50"`
 }
 
 type RemoveMemberReq struct {
@@ -62,7 +62,7 @@ type RemoveMemberReq struct {
 }
 
 type UpdateMemberRoleReq struct {
-	Role string `json:"role" binding:"required,oneof=admin editor viewer partner finance"`
+	Role string `json:"role" binding:"required,min=1,max=50"`
 }
 
 type TenantResp struct {
@@ -146,8 +146,8 @@ func (f *TransactionFilter) Normalize() {
 	if f.PageSize <= 0 {
 		f.PageSize = 20
 	}
-	if f.PageSize > 100 {
-		f.PageSize = 100
+	if f.PageSize > 100000 {
+		f.PageSize = 100000
 	}
 	if f.SortBy != "created_at" {
 		f.SortBy = "transaction_date"
@@ -210,15 +210,17 @@ type OCRText struct {
 
 // OCRAnalyzeResponse OCR+LLM 分析接口的响应（/upload/ocr/analyze）
 type OCRAnalyzeResponse struct {
-	ImagePath    string          `json:"image_path"`
-	AIMode       bool            `json:"ai_mode"`
-	Amount       float64         `json:"amount"`
-	Date         string          `json:"date"`
-	MerchantID   uint64          `json:"merchant_id"`
-	MerchantName string          `json:"merchant_name"`
-	RawTexts     []string        `json:"raw_texts"`
+	ImagePath    string           `json:"image_path"`
+	AIMode       bool             `json:"ai_mode"`
+	Amount       float64          `json:"amount"`
+	Date         string           `json:"date"`
+	MerchantID   uint64           `json:"merchant_id"`
+	MerchantName string           `json:"merchant_name"`
+	RawTexts     []string         `json:"raw_texts"`
 	LLM          []*LLMSuggestion `json:"llm,omitempty"`
-	LLMError     string          `json:"llm_error,omitempty"`
+	LLMError     string           `json:"llm_error,omitempty"`
+	Duplicate    bool             `json:"duplicate,omitempty"`
+	FileName     string           `json:"file_name,omitempty"`
 }
 
 // ========== LLM ==========
@@ -277,6 +279,29 @@ type StatisticsResp struct {
 	EndDate      string  `json:"end_date,omitempty"`
 }
 
+// ========== RBAC ==========
+
+type PermissionEntry struct {
+	Resource string `json:"resource"`
+	Action   string `json:"action"`
+}
+
+type CreateRoleReq struct {
+	Name        string            `json:"name" binding:"required,min=1,max=50"`
+	Permissions []PermissionEntry `json:"permissions" binding:"required,min=1"`
+}
+
+type UpdateRoleReq struct {
+	Permissions []PermissionEntry `json:"permissions" binding:"required,min=1"`
+}
+
+type RoleResp struct {
+	ID          uint64            `json:"id"`
+	Name        string            `json:"name"`
+	IsSystem    bool              `json:"is_system"`
+	Permissions []PermissionEntry `json:"permissions"`
+}
+
 type DailyStatResp struct {
 	Date         string  `json:"date"`
 	TotalIncome  float64 `json:"total_income"`
@@ -320,4 +345,65 @@ type RangeStatResp struct {
 	Total      StatisticsResp   `json:"total"`
 	Daily      []*DailyStatResp `json:"daily"`
 	Categories []*CategoryStat  `json:"categories"`
+}
+
+// ========== 平台管理员 ==========
+
+type PlatformLoginReq struct {
+	Email    string `json:"email" binding:"required,email"`
+	Password string `json:"password" binding:"required"`
+}
+
+type PlatformLoginResp struct {
+	Token string `json:"token"`
+	ID    uint64 `json:"id"`
+	Name  string `json:"name"`
+	Email string `json:"email"`
+}
+
+type PlatformUserItem struct {
+	ID        uint64 `json:"id"`
+	Username  string `json:"username"`
+	Email     string `json:"email"`
+	CreatedAt string `json:"created_at"`
+}
+
+type PlatformUserListResp struct {
+	Total int64              `json:"total"`
+	Page  int                `json:"page"`
+	Size  int                `json:"size"`
+	Items []*PlatformUserItem `json:"items"`
+}
+
+type PlatformUserDetailResp struct {
+	UserID           uint64 `json:"user_id"`
+	Username         string `json:"username"`
+	Email            string `json:"email"`
+	TenantCount      int64  `json:"tenant_count"`
+	TransactionCount int64  `json:"transaction_count"`
+	MediaCount       int64  `json:"media_count"`
+}
+
+type PlatformDashboardResp struct {
+	TotalUsers        int64 `json:"total_users"`
+	TotalTenants      int64 `json:"total_tenants"`
+	TotalTransactions int64 `json:"total_transactions"`
+}
+
+type PlatformUserFilter struct {
+	Keyword  string `form:"keyword"`
+	Page     int    `form:"page"`
+	PageSize int    `form:"page_size"`
+}
+
+func (f *PlatformUserFilter) Normalize() {
+	if f.Page <= 0 {
+		f.Page = 1
+	}
+	if f.PageSize <= 0 {
+		f.PageSize = 20
+	}
+	if f.PageSize > 100 {
+		f.PageSize = 100
+	}
 }

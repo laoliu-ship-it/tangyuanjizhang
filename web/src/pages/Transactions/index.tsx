@@ -1,4 +1,5 @@
 import { useState, useEffect, useCallback, useRef } from 'react'
+import axios from 'axios'
 import dayjs from 'dayjs'
 import { transactionApi, categoryApi, importApi, tenantApi, type Transaction, type Category } from '../../services/api'
 import { useResponsive } from '../../hooks/useResponsive'
@@ -135,6 +136,65 @@ export default function Transactions() {
     }
   }
 
+  async function handleExport() {
+    try {
+      const token = useAuthStore.getState().token
+      const tenantId = useTenantStore.getState().currentTenantId
+
+      if (!token) {
+        alert('请先登录')
+        return
+      }
+      if (!tenantId) {
+        alert('请先选择租户')
+        return
+      }
+
+      const params = new URLSearchParams()
+      if (filterStartDate) params.set('start_date', filterStartDate)
+      if (filterEndDate) params.set('end_date', filterEndDate)
+      if (filterType) params.set('type', filterType)
+
+      const response = await axios.get(`/api/export/excel?${params.toString()}`, {
+        responseType: 'blob',
+        headers: {
+          'Authorization': `Bearer ${token}`,
+          'X-Tenant-ID': String(tenantId),
+        },
+      })
+
+      const blob = new Blob([response.data], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' })
+      if (blob.size === 0) {
+        alert('导出失败：返回的文件为空')
+        return
+      }
+      if (blob.type.includes('application/json')) {
+        // 后端可能返回了 JSON 错误
+        const text = await blob.text()
+        try {
+          const err = JSON.parse(text)
+          alert(`导出失败: ${err.message || '未知错误'}`)
+        } catch {
+          alert('导出失败：返回格式错误')
+        }
+        return
+      }
+
+      const url = URL.createObjectURL(blob)
+      const a = document.createElement('a')
+      a.href = url
+      const startLabel = filterStartDate || '开始'
+      const endLabel = filterEndDate || '结束'
+      a.download = `交易记录_${startLabel}_${endLabel}.xlsx`
+      a.click()
+      URL.revokeObjectURL(url)
+    } catch (e: any) {
+      const msg = e?.response?.data?.message || e?.message || '未知错误'
+      alert(`导出失败: ${msg}`)
+      console.error('导出错误:', e)
+    }
+  }
+
   function handleImport(e: React.ChangeEvent<HTMLInputElement>) {
     const file = e.target.files?.[0]
     if (!file) return
@@ -160,6 +220,15 @@ export default function Transactions() {
 
       <div className="flex items-center justify-between mb-5">
         <h1 className="text-xl md:text-2xl font-bold text-gray-800">交易记录</h1>
+        {/* 移动端导出按钮 */}
+        {isMobile && canEdit && (
+          <button
+            onClick={handleExport}
+            className="flex items-center gap-1.5 px-3 py-2 bg-gray-100 hover:bg-gray-200 text-gray-600 text-sm font-medium rounded-xl transition-colors"
+          >
+            📤 导出
+          </button>
+        )}
         {!isMobile && canEdit && (
           <div className="flex items-center gap-2">
             <button
@@ -169,10 +238,16 @@ export default function Transactions() {
               📥 下载模板
             </button>
             <button
+              onClick={handleExport}
+              className="flex items-center gap-1.5 px-3 py-2 bg-gray-100 hover:bg-gray-200 text-gray-600 text-sm font-medium rounded-xl transition-colors"
+            >
+              📤 导出
+            </button>
+            <button
               onClick={() => fileImportRef.current?.click()}
               className="flex items-center gap-1.5 px-3 py-2 bg-gray-100 hover:bg-gray-200 text-gray-600 text-sm font-medium rounded-xl transition-colors"
             >
-              📤 导入
+              📦 导入
             </button>
             <button
               onClick={handleAddNew}

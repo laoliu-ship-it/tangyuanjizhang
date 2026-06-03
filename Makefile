@@ -7,7 +7,7 @@ FNOS_SRC    := $(CURDIR)/fnos
 APP_VERSION := $(shell grep '^version' fnos/manifest | awk '{print $$3}')
 FPK_NAME    := fandianjizhang.fpk
 
-.PHONY: all build deploy fnos-build fnos-deploy clean
+.PHONY: all build deploy fnos-build fnos-deploy clean nana
 
 # 一键：构建 + 打包 + 发布
 all: build fnos-deploy
@@ -52,6 +52,13 @@ fnos-deploy: fnos-build
 deploy: build
 	@echo "==> 普通部署（systemd）"
 	bash deploy.sh
+
+# ── 部署到生产服务器 ddd.com（快速发布 Go 二进制）─────────────
+prod:
+	@bash scripts/deploy-server.sh
+
+# ── 部署到 nana 服务器（deploy 的别名）────────────────────────
+nana: deploy
 
 clean:
 	rm -f fnos/app/server

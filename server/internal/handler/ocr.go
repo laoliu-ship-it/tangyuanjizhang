@@ -7,8 +7,11 @@ import (
 	"path/filepath"
 	"time"
 
+	"fandianjizhang/server/config"
 	"fandianjizhang/server/internal/dto"
 	"fandianjizhang/server/internal/middleware"
+	"fandianjizhang/server/internal/model"
+	"fandianjizhang/server/internal/repo"
 	"fandianjizhang/server/internal/service"
 	"fandianjizhang/server/pkg/storage"
 
@@ -21,10 +24,12 @@ type OCRHandler struct {
 	categorySvc service.CategoryService
 	llmSvc      service.LLMService
 	storage     storage.Storage
+	mediaRepo   repo.MediaFileRepo
+	uploadCfg   config.UploadConfig
 }
 
-func NewOCRHandler(ocrSvc service.OCRService, merchantSvc service.MerchantService, categorySvc service.CategoryService, llmSvc service.LLMService, store storage.Storage) *OCRHandler {
-	return &OCRHandler{ocrSvc: ocrSvc, merchantSvc: merchantSvc, categorySvc: categorySvc, llmSvc: llmSvc, storage: store}
+func NewOCRHandler(ocrSvc service.OCRService, merchantSvc service.MerchantService, categorySvc service.CategoryService, llmSvc service.LLMService, store storage.Storage, mediaRepo repo.MediaFileRepo, uploadCfg config.UploadConfig) *OCRHandler {
+	return &OCRHandler{ocrSvc: ocrSvc, merchantSvc: merchantSvc, categorySvc: categorySvc, llmSvc: llmSvc, storage: store, mediaRepo: mediaRepo, uploadCfg: uploadCfg}
 }
 
 // Upload 上传图片并进行 OCR 识别
@@ -49,12 +54,63 @@ func (h *OCRHandler) Upload(c *gin.Context) {
 		return
 	}
 
+	if header.Size > h.uploadCfg.MaxSize {
+		c.JSON(http.StatusBadRequest, dto.Fail(400, fmt.Sprintf("图片文件过大，最大支持 %dMB", h.uploadCfg.MaxSize/1024/1024)))
+		return
+	}
+
+	originalHash := c.Request.FormValue("original_hash")
+
+	// 去重检查：如果提供了 hash，先查是否已存在
+	if originalHash != "" {
+		existing, err := h.mediaRepo.GetByHash(c.Request.Context(), tenantID, originalHash)
+		if err != nil {
+			log.Printf("[OCR] tenant=%d media lookup error: %v", tenantID, err)
+		}
+		if existing != nil {
+			// 文件已存在，直接返回已有信息
+			log.Printf("[OCR] tenant=%d duplicate file detected, hash=%s, file=%s", tenantID, originalHash, existing.FileName)
+			c.JSON(http.StatusOK, dto.OK(gin.H{
+				"image_path":    "/" + existing.FilePath,
+				"ai_mode":       false,
+				"amount":        float64(0),
+				"date":          "",
+				"merchant_id":   0,
+				"merchant_name": "",
+				"raw_texts":     []string{},
+				"duplicate":     true,
+				"file_name":     existing.FileName,
+			}))
+			return
+		}
+	}
+
 	date := time.Now().Format("2006-01-02")
 	filename := fmt.Sprintf("%d_ocr%s", time.Now().UnixNano(), ext)
 	savedPath, err := h.storage.Save(tenantID, date, filename, file)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, dto.Fail(500, "保存图片失败: "+err.Error()))
 		return
+	}
+
+	// 记录媒体文件
+	if originalHash != "" {
+		fileSize := header.Size
+		if fileSize == 0 {
+			// 如果 FormFile header 没有 size，尝试从文件头推断
+			fileSize = -1
+		}
+		mf := &model.MediaFile{
+			TenantID:     tenantID,
+			OriginalHash: originalHash,
+			FileName:     header.Filename,
+			FilePath:     savedPath,
+			FileSize:     fileSize,
+			MimeType:     header.Header.Get("Content-Type"),
+		}
+		if err := h.mediaRepo.Create(c.Request.Context(), mf); err != nil {
+			log.Printf("[OCR] tenant=%d failed to create media record: %v", tenantID, err)
+		}
 	}
 
 	result, err := h.ocrSvc.ProcessImage(c.Request.Context(), savedPath)
@@ -106,12 +162,83 @@ func (h *OCRHandler) Analyze(c *gin.Context) {
 		return
 	}
 
+	if header.Size > h.uploadCfg.MaxSize {
+		c.JSON(http.StatusBadRequest, dto.Fail(400, fmt.Sprintf("图片文件过大，最大支持 %dMB", h.uploadCfg.MaxSize/1024/1024)))
+		return
+	}
+
+	originalHash := c.Request.FormValue("original_hash")
+
+	// 去重检查
+	if originalHash != "" {
+		existing, err := h.mediaRepo.GetByHash(c.Request.Context(), tenantID, originalHash)
+		if err != nil {
+			log.Printf("[OCR] tenant=%d media lookup error: %v", tenantID, err)
+		}
+		if existing != nil {
+			log.Printf("[OCR] tenant=%d duplicate file detected (analyze), hash=%s, file=%s", tenantID, originalHash, existing.FileName)
+			// 对已存在文件也做 LLM 分析
+			var categoryItems []dto.CategoryItem
+			if cats, cerr := h.categorySvc.List(c.Request.Context(), tenantID); cerr == nil {
+				categoryItems = make([]dto.CategoryItem, 0, len(cats))
+				for _, cat := range cats {
+					categoryItems = append(categoryItems, dto.CategoryItem{
+						ID:   cat.ID,
+						Name: cat.Name,
+						Type: cat.Type,
+					})
+				}
+			}
+
+			rawTexts := []string{}
+			var llmSuggestions []*dto.LLMSuggestion
+			var llmErrMsg string
+			if suggestions, lerr := h.llmSvc.Analyze(c.Request.Context(), tenantID, existing.FilePath, rawTexts, categoryItems); lerr != nil {
+				log.Printf("[LLM] tenant=%d analyze error: %v", tenantID, lerr)
+				llmErrMsg = lerr.Error()
+			} else {
+				llmSuggestions = suggestions
+			}
+
+			c.JSON(http.StatusOK, dto.OK(dto.OCRAnalyzeResponse{
+				ImagePath:    "/" + existing.FilePath,
+				AIMode:       false,
+				Amount:       0,
+				Date:         "",
+				MerchantID:   0,
+				MerchantName: "",
+				RawTexts:     rawTexts,
+				LLM:          llmSuggestions,
+				LLMError:     llmErrMsg,
+				Duplicate:    true,
+				FileName:     existing.FileName,
+			}))
+			return
+		}
+	}
+
 	date := time.Now().Format("2006-01-02")
 	filename := fmt.Sprintf("%d_analyze%s", time.Now().UnixNano(), ext)
 	savedPath, err := h.storage.Save(tenantID, date, filename, file)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, dto.Fail(500, "保存图片失败: "+err.Error()))
 		return
+	}
+
+	// 记录媒体文件
+	if originalHash != "" {
+		fileSize := header.Size
+		mf := &model.MediaFile{
+			TenantID:     tenantID,
+			OriginalHash: originalHash,
+			FileName:     header.Filename,
+			FilePath:     savedPath,
+			FileSize:     fileSize,
+			MimeType:     header.Header.Get("Content-Type"),
+		}
+		if err := h.mediaRepo.Create(c.Request.Context(), mf); err != nil {
+			log.Printf("[OCR] tenant=%d failed to create media record: %v", tenantID, err)
+		}
 	}
 
 	ocrResult, err := h.ocrSvc.ProcessImage(c.Request.Context(), savedPath)

@@ -2,10 +2,11 @@ import { useState, useEffect } from 'react'
 import Members from './Members'
 import Categories from './Categories'
 import LLMSettings from './LLMSettings'
+import Roles from './Roles'
 import { tenantApi } from '../../services/api'
 import { useTenantStore } from '../../store/tenant'
 
-type Tab = 'members' | 'categories' | 'llm'
+type Tab = 'members' | 'roles' | 'categories' | 'llm'
 
 const SUFFIX = '的记账本'
 
@@ -85,6 +86,16 @@ export default function TenantSettings() {
           成员管理
         </button>
         <button
+          onClick={() => setActiveTab('roles')}
+          className={`px-6 py-2 rounded-lg text-sm font-medium transition-colors ${
+            activeTab === 'roles'
+              ? 'bg-white text-gray-800 shadow-sm'
+              : 'text-gray-500 hover:text-gray-700'
+          }`}
+        >
+          角色权限
+        </button>
+        <button
           onClick={() => setActiveTab('categories')}
           className={`px-6 py-2 rounded-lg text-sm font-medium transition-colors ${
             activeTab === 'categories'
@@ -107,6 +118,7 @@ export default function TenantSettings() {
       </div>
 
       {activeTab === 'members' && <Members />}
+      {activeTab === 'roles' && <Roles />}
       {activeTab === 'categories' && <Categories />}
       {activeTab === 'llm' && <LLMSettings />}
     </div>

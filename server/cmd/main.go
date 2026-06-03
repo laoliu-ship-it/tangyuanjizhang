@@ -1,13 +1,17 @@
 package main
 
 import (
+	"fmt"
 	"io/fs"
 	"log"
 	"net/http"
+	"os"
 	"strings"
 	"time"
 
 	"fandianjizhang/server/config"
+	"fandianjizhang/server/internal/casbin"
+	"fandianjizhang/server/internal/dto"
 	"fandianjizhang/server/internal/handler"
 	"fandianjizhang/server/internal/middleware"
 	"fandianjizhang/server/internal/model"
@@ -21,6 +25,7 @@ import (
 
 	"github.com/gin-contrib/cors"
 	"github.com/gin-gonic/gin"
+	"golang.org/x/crypto/bcrypt"
 	"gorm.io/driver/mysql"
 	"gorm.io/gorm"
 	"gorm.io/gorm/logger"
@@ -39,14 +44,22 @@ func main() {
 	}
 
 	// 自动迁移新增表
-	if err := db.AutoMigrate(&model.TenantLLMConfig{}); err != nil {
+	if err := db.AutoMigrate(
+		&model.Tenant{},
+		&model.TenantMember{},
+		&model.TenantLLMConfig{},
+		&model.TenantRole{},
+		&model.RolePermission{},
+		&model.MediaFile{},
+		&model.PlatformAdmin{},
+	); err != nil {
 		log.Fatalf("数据库迁移失败: %v", err)
 	}
 
-	// 初始化 Casbin enforcer（内存策略，启动时加载固定权限规则）
-	enforcer, err := middleware.NewCasbinEnforcer()
+	// 初始化 Casbin EnforcerPool（按租户从数据库加载权限）
+	enforcerPool, err := casbin.NewEnforcerPool(db)
 	if err != nil {
-		log.Fatalf("初始化 Casbin 失败: %v", err)
+		log.Fatalf("初始化 Casbin EnforcerPool 失败: %v", err)
 	}
 
 	// 初始化 OCR 引擎
@@ -66,6 +79,14 @@ func main() {
 	merchantRepo := repo.NewMerchantRepo(db)
 	transactionRepo := repo.NewTransactionRepo(db)
 	llmConfigRepo := repo.NewTenantLLMConfigRepo(db)
+	roleRepo := repo.NewTenantRoleRepo(db)
+	permRepo := repo.NewRolePermissionRepo(db)
+	mediaRepo := repo.NewMediaFileRepo(db)
+	platformAdminRepo := repo.NewPlatformAdminRepo(db)
+	platformStatsRepo := repo.NewPlatformStatsRepo(db)
+
+	// 初始化 RBAC Service
+	rbacSvc := service.NewRBACService(roleRepo, permRepo, enforcerPool)
 
 	// 初始化 Service 层
 	authSvc := service.NewAuthService(userRepo, tenantRepo, tenantMemberRepo, categoryRepo, cfg)
@@ -91,11 +112,14 @@ func main() {
 	categoryHandler := handler.NewCategoryHandler(categorySvc)
 	merchantHandler := handler.NewMerchantHandler(merchantSvc)
 	transactionHandler := handler.NewTransactionHandler(transactionSvc)
-	ocrHandler := handler.NewOCRHandler(ocrSvc, merchantSvc, categorySvc, llmSvcI, store)
+	ocrHandler := handler.NewOCRHandler(ocrSvc, merchantSvc, categorySvc, llmSvcI, store, mediaRepo, cfg.Upload)
 	llmHandler := handler.NewLLMHandler(llmSvcI)
 	statisticsHandler := handler.NewStatisticsHandler(statisticsSvc)
 	exporter := excel.NewExporter()
 	exportHandler := handler.NewExportHandler(transactionSvc, exporter, categoryRepo, transactionRepo)
+	rbacHandler := handler.NewRBACHandler(rbacSvc)
+	platformAdminSvc := service.NewPlatformAdminService(platformAdminRepo, platformStatsRepo, userRepo, cfg)
+	platformAdminHandler := handler.NewPlatformAdminHandler(platformAdminSvc)
 
 	// 初始化路由
 	r := gin.Default()
@@ -104,6 +128,7 @@ func main() {
 	// 复用中间件
 	jwtMW := middleware.JWT(cfg)
 	tenantMW := middleware.Tenant(tenantMemberRepo)
+	platformJWTMW := middleware.PlatformJWT(cfg)
 
 	api := r.Group("/api")
 
@@ -127,73 +152,129 @@ func main() {
 	{
 		// 租户成员管理（admin 权限）
 		tenant.POST("/tenants/:id/members",
-			middleware.Casbin(enforcer, "tenant", "write"),
+			middleware.Casbin(enforcerPool, "tenant", "write"),
 			tenantHandler.InviteMember)
 		tenant.DELETE("/tenants/:id/members/:userId",
-			middleware.Casbin(enforcer, "tenant", "write"),
+			middleware.Casbin(enforcerPool, "tenant", "write"),
 			tenantHandler.RemoveMember)
 		tenant.PUT("/tenants/:id/members/:userId",
-			middleware.Casbin(enforcer, "tenant", "write"),
+			middleware.Casbin(enforcerPool, "tenant", "write"),
 			tenantHandler.UpdateMemberRole)
 		tenant.GET("/tenants/:id/members",
 			tenantHandler.ListMembers)
 
-		// OCR 上传（editor 及以上）
+			// RBAC 角色管理
+			tenant.GET("/permissions",
+				rbacHandler.ListPermissions)
+			tenant.GET("/tenants/:id/roles",
+				middleware.Casbin(enforcerPool, "tenant", "read"),
+				rbacHandler.ListRoles)
+			tenant.POST("/tenants/:id/roles",
+				middleware.Casbin(enforcerPool, "tenant", "write"),
+				rbacHandler.CreateRole)
+			tenant.PUT("/tenants/:id/roles/:roleId",
+				middleware.Casbin(enforcerPool, "tenant", "write"),
+				rbacHandler.UpdateRole)
+			tenant.DELETE("/tenants/:id/roles/:roleId",
+				middleware.Casbin(enforcerPool, "tenant", "write"),
+				rbacHandler.DeleteRole)
+
+		// OCR 上传（需增改账目权限）
 		tenant.POST("/upload/ocr",
-			middleware.Casbin(enforcer, "ocr", "write"),
+			middleware.Casbin(enforcerPool, "transaction", "write"),
 			ocrHandler.Upload)
-		// OCR + LLM 分析（editor 及以上）
+		// OCR + LLM 分析（需增改账目权限）
 		tenant.POST("/upload/ocr/analyze",
-			middleware.Casbin(enforcer, "ocr", "write"),
+			middleware.Casbin(enforcerPool, "transaction", "write"),
 			ocrHandler.Analyze)
 
 		// LLM 配置（admin 查看和修改）
 		tenant.GET("/llm/config",
-			middleware.Casbin(enforcer, "tenant", "read"),
+			middleware.Casbin(enforcerPool, "tenant", "read"),
 			llmHandler.GetConfig)
 		tenant.PUT("/llm/config",
-			middleware.Casbin(enforcer, "tenant", "write"),
+			middleware.Casbin(enforcerPool, "tenant", "write"),
 			llmHandler.SaveConfig)
 
 		// 交易记录批量创建（editor 及以上）
 		tenant.POST("/transactions/batch",
-			middleware.Casbin(enforcer, "transaction", "write"),
+			middleware.Casbin(enforcerPool, "transaction", "write"),
 			transactionHandler.BatchCreate)
 		// 交易记录列表（所有成员可读）
 		tenant.GET("/transactions",
-			middleware.Casbin(enforcer, "transaction", "read"),
+			middleware.Casbin(enforcerPool, "transaction", "read"),
 			transactionHandler.List)
 		// 交易记录创建（editor 及以上）
 		tenant.POST("/transactions",
-			middleware.Casbin(enforcer, "transaction", "write"),
+			middleware.Casbin(enforcerPool, "transaction", "write"),
 			transactionHandler.Create)
 		// 交易记录更新（editor 及以上）
 		tenant.PUT("/transactions/:id",
-			middleware.Casbin(enforcer, "transaction", "write"),
+			middleware.Casbin(enforcerPool, "transaction", "write"),
 			transactionHandler.Update)
 		// 交易记录删除（editor 及以上）
 		tenant.DELETE("/transactions/:id",
-			middleware.Casbin(enforcer, "transaction", "write"),
+			middleware.Casbin(enforcerPool, "transaction", "write"),
 			transactionHandler.Delete)
 
 		// 统计（所有成员可读）
 		tenant.GET("/statistics/daily",
-			middleware.Casbin(enforcer, "statistics", "read"),
+			middleware.Casbin(enforcerPool, "statistics", "read"),
 			statisticsHandler.Daily)
 		tenant.GET("/statistics/monthly",
-			middleware.Casbin(enforcer, "statistics", "read"),
+			middleware.Casbin(enforcerPool, "statistics", "read"),
 			statisticsHandler.Monthly)
 		tenant.GET("/statistics/yearly",
-			middleware.Casbin(enforcer, "statistics", "read"),
+			middleware.Casbin(enforcerPool, "statistics", "read"),
 			statisticsHandler.Yearly)
 		tenant.GET("/statistics/range",
-			middleware.Casbin(enforcer, "statistics", "read"),
+			middleware.Casbin(enforcerPool, "statistics", "read"),
 			statisticsHandler.Range)
 
 		// 导出（所有成员可读）
 		tenant.GET("/export/excel",
-			middleware.Casbin(enforcer, "export", "read"),
+			middleware.Casbin(enforcerPool, "export", "read"),
 			exportHandler.Excel)
+
+		// 测试导出 API - 直接返回查询结果用于调试
+		tenant.GET("/export/debug", func(c *gin.Context) {
+			tenantID := middleware.GetTenantID(c)
+			start := c.Query("start_date")
+			end := c.Query("end_date")
+			txType := c.Query("type")
+
+			if start == "" {
+				now := time.Now()
+				start = fmt.Sprintf("%d-%02d-01", now.Year(), now.Month())
+			}
+			if end == "" {
+				end = time.Now().Format("2006-01-02")
+			}
+
+			filter := dto.TransactionFilter{
+				StartDate: start,
+				EndDate:   end,
+				Type:      txType,
+				Page:      1,
+				PageSize:  100000,
+			}
+
+			// 直接查询数据库
+			txs, total, err := transactionRepo.List(c.Request.Context(), tenantID, filter)
+			if err != nil {
+				c.JSON(500, gin.H{"error": err.Error()})
+				return
+			}
+
+			// 返回详细信息
+			c.JSON(200, gin.H{
+				"tenant_id":    tenantID,
+				"filter":       filter,
+				"total":        total,
+				"count":        len(txs),
+				"transactions": txs,
+			})
+		})
 
 		// 导入模板下载（所有成员可读）
 		tenant.GET("/import/template",
@@ -201,44 +282,61 @@ func main() {
 
 		// 解析 Excel 表头（editor 及以上）
 		tenant.POST("/import/parse-headers",
-			middleware.Casbin(enforcer, "transaction", "write"),
+			middleware.Casbin(enforcerPool, "transaction", "write"),
 			exportHandler.ParseHeaders)
 
 		// 导入 Excel（editor 及以上）
 		tenant.POST("/import/excel",
-			middleware.Casbin(enforcer, "transaction", "write"),
+			middleware.Casbin(enforcerPool, "transaction", "write"),
 			exportHandler.ImportExcel)
 
 		// 分类读取（所有成员）
 		tenant.GET("/categories",
-			middleware.Casbin(enforcer, "category", "read"),
+			middleware.Casbin(enforcerPool, "category", "read"),
 			categoryHandler.List)
 		// 分类写操作（仅 admin）
 		tenant.POST("/categories",
-			middleware.Casbin(enforcer, "category", "write"),
+			middleware.Casbin(enforcerPool, "category", "write"),
 			categoryHandler.Create)
 		tenant.PUT("/categories/:id",
-			middleware.Casbin(enforcer, "category", "write"),
+			middleware.Casbin(enforcerPool, "category", "write"),
 			categoryHandler.Update)
 		tenant.DELETE("/categories/:id",
-			middleware.Casbin(enforcer, "category", "write"),
+			middleware.Casbin(enforcerPool, "category", "write"),
 			categoryHandler.Delete)
 
 		// 商户读取（所有成员）
 		tenant.GET("/merchants",
-			middleware.Casbin(enforcer, "merchant", "read"),
+			middleware.Casbin(enforcerPool, "merchant", "read"),
 			merchantHandler.List)
 		// 商户写操作（仅 admin）
 		tenant.POST("/merchants",
-			middleware.Casbin(enforcer, "merchant", "write"),
+			middleware.Casbin(enforcerPool, "merchant", "write"),
 			merchantHandler.Create)
 		tenant.PUT("/merchants/:id",
-			middleware.Casbin(enforcer, "merchant", "write"),
+			middleware.Casbin(enforcerPool, "merchant", "write"),
 			merchantHandler.Update)
 		tenant.DELETE("/merchants/:id",
-			middleware.Casbin(enforcer, "merchant", "write"),
+			middleware.Casbin(enforcerPool, "merchant", "write"),
 			merchantHandler.Delete)
 	}
+
+	// ========== 平台管理员路由（独立认证，不受租户中间件影响） ==========
+	platform := api.Group("/platform")
+	{
+		platform.POST("/auth/login", platformAdminHandler.Login)
+
+		platformAuth := platform.Group("/")
+		platformAuth.Use(platformJWTMW)
+		{
+			platformAuth.GET("/dashboard", platformAdminHandler.Dashboard)
+			platformAuth.GET("/users", platformAdminHandler.ListUsers)
+			platformAuth.GET("/users/:id", platformAdminHandler.GetUserDetail)
+		}
+	}
+
+	// Seed platform admin from env (must succeed before starting HTTP server)
+	ensurePlatformAdmin(db)
 
 	// 静态文件服务（上传的图片）
 	r.Static("/uploads", cfg.Upload.Path)
@@ -284,4 +382,42 @@ func fileExists(fsys fs.FS, path string) bool {
 	st, err := f.Stat()
 	f.Close()
 	return err == nil && !st.IsDir()
+}
+
+func ensurePlatformAdmin(db *gorm.DB) {
+	email := getEnv("PLATFORM_ADMIN_EMAIL", "admin@fandianjizhang.com")
+	password := getEnv("PLATFORM_ADMIN_PASSWORD", "admin123456")
+	name := getEnv("PLATFORM_ADMIN_NAME", "Admin")
+
+	var admin model.PlatformAdmin
+	result := db.Where("email = ? AND deleted_at IS NULL", email).First(&admin)
+
+	if result.Error == nil {
+		log.Printf("[seed] platform admin already exists: %s (skipping)", email)
+		return
+	}
+
+	hash, err := bcrypt.GenerateFromPassword([]byte(password), bcrypt.DefaultCost)
+	if err != nil {
+		log.Printf("[seed] ERROR: failed to hash platform admin password: %v", err)
+		return
+	}
+
+	admin = model.PlatformAdmin{
+		Email:        email,
+		PasswordHash: string(hash),
+		Name:         name,
+	}
+	if err := db.Create(&admin).Error; err != nil {
+		log.Printf("[seed] ERROR: failed to create platform admin: %v", err)
+	} else {
+		log.Printf("[seed] created platform admin: %s (name: %s)", email, name)
+	}
+}
+
+func getEnv(key, defaultVal string) string {
+	if v := os.Getenv(key); v != "" {
+		return v
+	}
+	return defaultVal
 }

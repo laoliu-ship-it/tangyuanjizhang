@@ -1,8 +1,8 @@
-import { useState, useRef, useCallback } from 'react'
+import { useState, useRef, useCallback, useEffect } from 'react'
 import dayjs from 'dayjs'
-import { uploadApi, categoryApi, transactionApi, type OcrAnalyzeResult, type LLMSuggestion, type Category, type TransactionCreatePayload } from '../../services/api'
+import { uploadApi, categoryApi, transactionApi, llmApi, type OcrAnalyzeResult, type OcrResult, type LLMSuggestion, type Category, type TransactionCreatePayload } from '../../services/api'
 import { useResponsive } from '../../hooks/useResponsive'
-import { toWebP } from '../../utils/imageUtils'
+import { toWebP, fileSHA256, getImageEngineStatus } from '../../utils/imageUtils'
 
 export default function UploadOCR() {
   const { isMobile } = useResponsive()
@@ -12,6 +12,7 @@ export default function UploadOCR() {
   const [uploading, setUploading] = useState(false)
   const [ocrResult, setOcrResult] = useState<OcrAnalyzeResult | null>(null)
   const [categories, setCategories] = useState<Category[]>([])
+  const [llmEnabled, setLlmEnabled] = useState(false)
 
   // 编辑字段
   const [editAmount, setEditAmount] = useState('')
@@ -22,22 +23,70 @@ export default function UploadOCR() {
   const [editNote, setEditNote] = useState('')
   const [saving, setSaving] = useState(false)
 
-  async function processFile(file: File) {
+  // 加载 LLM 配置
+  useEffect(() => {
+    llmApi.getConfig().then(r => {
+      setLlmEnabled(r.data.data?.enabled ?? false)
+    }).catch(() => {
+      setLlmEnabled(false)
+    })
+  }, [])
+
+  const [wasmLoading, setWasmLoading] = useState(false)
+
+  async function processFile(file: File, quality = 0.85) {
     if (!file.type.startsWith('image/')) {
       alert('请上传图片文件')
       return
     }
+
+    const engineStatus = getImageEngineStatus()
+    if (engineStatus === 'wasm-loading' || engineStatus === 'unavailable') {
+      setWasmLoading(true)
+    }
+
     setUploading(true)
     setOcrResult(null)
     try {
-      const webpFile = await toWebP(file)
-      const [ocrRes, catRes] = await Promise.all([
-        uploadApi.ocrAnalyze(webpFile),
+      const originalHash = await fileSHA256(file)
+      const result = await toWebP(file, quality)
+      setWasmLoading(false)
+
+      // 图片超过 1MB，弹窗询问是否压缩
+      if (result.oversized) {
+        setUploading(false)
+        const sizeMB = ((result.size ?? 0) / 1024 / 1024).toFixed(1)
+        const ok = confirm(`图片太大（${sizeMB}MB），是否自动压缩后重试？\n（质量将降低约10%）`)
+        if (!ok) return
+        // 质量下降 10% 重试
+        const nextQuality = Math.max(0.1, quality - 0.1)
+        return processFile(file, nextQuality)
+      }
+
+      const webpFile = result.file!
+      const [catRes] = await Promise.all([
         categoryApi.list(),
       ])
-      const ocr = ocrRes.data.data
-      setOcrResult(ocr)
       setCategories(catRes.data.data)
+
+      let ocr: OcrAnalyzeResult
+      if (llmEnabled) {
+        const ocrRes = await uploadApi.ocrAnalyze(webpFile, originalHash)
+        ocr = ocrRes.data.data
+      } else {
+        const res = await uploadApi.ocr(webpFile, originalHash)
+        const raw = res.data.data as OcrResult
+        ocr = {
+          image_path: raw.image_path,
+          ai_mode: raw.ai_mode,
+          amount: raw.amount,
+          date: raw.date,
+          merchant_id: raw.merchant_id,
+          merchant_name: raw.merchant_name ?? '',
+          raw_texts: raw.raw_texts,
+        }
+      }
+      setOcrResult(ocr)
 
       // 优先用 LLM 结果填入，否则用 OCR
       if (ocr.llm && ocr.llm.length > 0) {
@@ -51,6 +100,7 @@ export default function UploadOCR() {
         setEditCategoryId('')
       }
     } catch (err: unknown) {
+      setWasmLoading(false)
       const axErr = err as { response?: { status?: number; data?: { message?: string } } }
       const msg = axErr.response?.data?.message
       if (axErr.response?.status === 403) {
@@ -167,7 +217,9 @@ export default function UploadOCR() {
           {uploading ? (
             <div className="flex flex-col items-center gap-3">
               <div className="w-12 h-12 border-4 border-blue-500 border-t-transparent rounded-full animate-spin" />
-              <p className="text-gray-500">识别中，请稍候...</p>
+              <p className="text-gray-500">
+                {wasmLoading ? '正在加载图片转换引擎，请稍候...' : '识别中，请稍候...'}
+              </p>
             </div>
           ) : (
             <div className="flex flex-col items-center gap-3">

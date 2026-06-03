@@ -34,7 +34,8 @@ func (Tenant) TableName() string { return "tenants" }
 type TenantMember struct {
 	TenantID uint64    `gorm:"primaryKey;not null" json:"tenant_id"`
 	UserID   uint64    `gorm:"primaryKey;not null" json:"user_id"`
-	Role     string    `gorm:"type:enum('admin','editor','viewer','partner','finance');default:'viewer'" json:"role"`
+	Role     string    `gorm:"type:varchar(50);not null;default:'viewer'" json:"role"`
+	RoleID   *uint64   `json:"role_id"`
 	JoinedAt time.Time `json:"joined_at"`
 
 	Tenant *Tenant `gorm:"foreignKey:TenantID" json:"tenant,omitempty"`
@@ -121,3 +122,29 @@ type TenantLLMConfig struct {
 }
 
 func (TenantLLMConfig) TableName() string { return "tenant_llm_configs" }
+
+// MediaFile 租户媒体文件表（用于去重和资源统计）
+type MediaFile struct {
+	ID           uint64    `gorm:"primaryKey;autoIncrement" json:"id"`
+	TenantID     uint64    `gorm:"not null;index" json:"tenant_id"`
+	OriginalHash string    `gorm:"size:64;not null;index:idx_hash_tenant,priority:1" json:"original_hash"` // 原始文件 SHA-256
+	FileName     string    `gorm:"size:255;not null" json:"file_name"`
+	FilePath     string    `gorm:"size:500;not null" json:"file_path"`
+	FileSize     int64     `gorm:"not null" json:"file_size"` // 字节
+	MimeType     string    `gorm:"size:100;default:''" json:"mime_type"`
+	CreatedAt    time.Time `json:"created_at"`
+}
+
+func (MediaFile) TableName() string { return "media_files" }
+
+// PlatformAdmin 平台管理员表
+type PlatformAdmin struct {
+	ID           uint64     `gorm:"primaryKey;autoIncrement" json:"id"`
+	Email        string     `gorm:"uniqueIndex;size:100;not null" json:"email"`
+	PasswordHash string     `gorm:"size:255;not null" json:"-"`
+	Name         string     `gorm:"size:50;not null" json:"name"`
+	CreatedAt    time.Time  `json:"created_at"`
+	DeletedAt    *time.Time `gorm:"index" json:"-"`
+}
+
+func (PlatformAdmin) TableName() string { return "platform_admins" }

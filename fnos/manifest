@@ -1,7 +1,7 @@
 appname               = fandianjizhang
 version               = 1.0.0
-display_name          = 饭店记账
-desc                  = 饭店收支记账本，支持拍照 OCR 识别金额，多租户多成员协作。
+display_name          = 汤圆记账
+desc                  = 汤圆收支记账本，支持拍照 OCR 识别金额，多租户多成员协作。
 platform              = x86
 source                = thirdparty
 maintainer            = chen

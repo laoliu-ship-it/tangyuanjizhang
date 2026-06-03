@@ -1,5 +1,7 @@
 server/web/static/*
+web/node_modules
 !server/web/static/.gitkeep
 !server/web/static/index.html
 web/dist/
 dist-server
+.env.deploy

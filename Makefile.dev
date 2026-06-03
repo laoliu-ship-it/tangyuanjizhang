@@ -1,0 +1,56 @@
+.PHONY: dev dev-frontend dev-backend install check-deps
+
+# 默认目标：显示帮助信息
+.DEFAULT_GOAL := help
+
+# 使用 nvm 管理的 Node.js 路径
+NODE := $(shell source ~/.nvm/nvm.sh 2>/dev/null && which node)
+NPM := $(shell source ~/.nvm/nvm.sh 2>/dev/null && which npm)
+
+help:
+	@echo "可用命令:"
+	@echo "  make dev        - 一键启动前后端开发服务"
+	@echo "  make dev-frontend - 仅启动前端开发服务"
+	@echo "  make dev-backend  - 仅启动后端开发服务"
+	@echo "  make install      - 安装前后端依赖"
+	@echo "  make check-deps   - 检查必要依赖"
+
+# 检查依赖
+check-deps:
+	@echo "==> 检查必要依赖..."
+	@command -v go >/dev/null 2>&1 || { echo "错误: 未找到 go，请先安装"; exit 1; }
+	@test -x $(NODE) || { echo "错误: 未找到 node，请先通过 nvm 安装"; exit 1; }
+	@test -x $(NPM) || { echo "错误: 未找到 npm，请先通过 nvm 安装"; exit 1; }
+	@echo "==> 依赖检查完成 (Node.js $$($(NODE) --version))"
+
+# 安装前后端依赖
+install: check-deps
+	@echo "==> 安装前端依赖..."
+	cd web && $(NPM) install
+	@echo "==> 安装后端依赖..."
+	cd server && go mod download
+	@echo "==> 依赖安装完成"
+
+# 一键启动前后端开发服务
+dev: check-deps
+	@echo "==> 启动开发模式..."
+	@echo "==> 后端将启动在 :8080"
+	@echo "==> 前端将启动在 :5173"
+	@echo "==> 按 Ctrl+C 停止所有服务"
+	@# 使用 trap 确保退出时清理后台进程
+	@trap 'kill %1 2>/dev/null' EXIT
+	@# 在后台启动后端
+	@cd server && go run ./cmd/main.go &
+	@sleep 3
+	@# 在前台启动前端
+	cd web && $(NPM) run dev
+
+# 仅启动前端开发服务
+dev-frontend: check-deps
+	@echo "==> 启动前端开发服务..."
+	cd web && $(NPM) run dev
+
+# 仅启动后端开发服务
+dev-backend: check-deps
+	@echo "==> 启动后端开发服务..."
+	cd server && go run ./cmd/main.go

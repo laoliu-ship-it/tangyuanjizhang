@@ -41,7 +41,8 @@ type OCRConfig struct {
 }
 
 type UploadConfig struct {
-	Path string
+	Path    string
+	MaxSize int64 // 上传最大文件大小（字节），默认 1MB
 }
 
 type ServerConfig struct {
@@ -72,7 +73,8 @@ func Load() *Config {
 			TimeoutSeconds: parseInt(getEnv("LLM_TIMEOUT_SECONDS", "30")),
 		},
 		Upload: UploadConfig{
-			Path: getEnv("UPLOAD_PATH", "./uploads"),
+			Path:    getEnv("UPLOAD_PATH", "./uploads"),
+			MaxSize: parseInt64(getEnv("UPLOAD_MAX_SIZE", "1048576")),
 		},
 		Server: ServerConfig{
 			Port: getEnv("SERVER_PORT", "8080"),
@@ -91,6 +93,14 @@ func parseInt(s string) int {
 	n, err := strconv.Atoi(s)
 	if err != nil || n <= 0 {
 		return 30
+	}
+	return n
+}
+
+func parseInt64(s string) int64 {
+	n, err := strconv.ParseInt(s, 10, 64)
+	if err != nil || n <= 0 {
+		return 1048576
 	}
 	return n
 }

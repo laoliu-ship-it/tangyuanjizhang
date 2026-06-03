@@ -52,6 +52,16 @@ const navItems: NavItem[] = [
       </svg>
     ),
   },
+  {
+    to: '/help',
+    label: '帮助',
+    icon: (
+      <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2}
+          d="M8.228 9c.549-1.165 2.03-2 3.772-2 2.21 0 4 1.343 4 3 0 1.4-1.278 2.575-3.006 2.907-.542.104-.994.54-.994 1.093m0 3h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+      </svg>
+    ),
+  },
 ]
 
 export default function AppLayout() {
@@ -69,7 +79,7 @@ export default function AppLayout() {
       <div className="flex flex-col min-h-screen bg-gray-50">
         {/* 移动端顶部栏 */}
         <header className="bg-white border-b border-gray-100 px-4 py-3 flex items-center justify-between sticky top-0 z-10">
-          <span className="text-lg font-bold text-blue-600">饭店记账</span>
+          <span className="text-lg font-bold text-blue-600">汤圆记账</span>
           <TenantSwitcher />
         </header>
 
@@ -109,7 +119,7 @@ export default function AppLayout() {
       <aside className="w-60 bg-white border-r border-gray-100 flex flex-col flex-shrink-0">
         {/* Logo */}
         <div className="px-6 py-5 border-b border-gray-100">
-          <h1 className="text-xl font-bold text-blue-600">饭店记账</h1>
+          <h1 className="text-xl font-bold text-blue-600">汤圆记账</h1>
           <p className="text-xs text-gray-400 mt-0.5">专业记账管理工具</p>
         </div>
 

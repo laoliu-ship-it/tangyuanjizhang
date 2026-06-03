@@ -1,6 +1,6 @@
 import { useState } from 'react'
 import { Link, useNavigate } from 'react-router-dom'
-import { authApi } from '../../services/api'
+import { authApi, tenantApi } from '../../services/api'
 import { useAuthStore } from '../../store/auth'
 import { useTenantStore } from '../../store/tenant'
 
@@ -20,7 +20,15 @@ export default function Login() {
       const res = await authApi.login({ email, password })
       const { token, user_id, username, tenants } = res.data.data
       setAuth(token, user_id, username)
-      setTenants((tenants ?? []).map((t: { id: number; name: string }) => ({ id: t.id, name: t.name })))
+      // 登录成功后重新拉取租户列表，确保包含刚被邀请加入的账本
+      try {
+        const tenantsRes = await tenantApi.list()
+        const tenantsList = tenantsRes.data.data ?? []
+        setTenants(tenantsList.map((t: { id: number; name: string }) => ({ id: t.id, name: t.name, owner_id: (t as { owner_id?: number }).owner_id })))
+      } catch {
+        // 回退到登录响应中的租户列表
+        setTenants((tenants ?? []).map((t: { id: number; name: string }) => ({ id: t.id, name: t.name })))
+      }
       navigate('/', { replace: true })
     } catch (err: unknown) {
       const msg = (err as { response?: { data?: { message?: string } } })?.response?.data?.message
@@ -34,7 +42,7 @@ export default function Login() {
     <div className="min-h-screen bg-gradient-to-br from-blue-50 to-indigo-100 flex items-center justify-center p-4">
       <div className="bg-white rounded-2xl shadow-xl w-full max-w-md p-8">
         <div className="text-center mb-8">
-          <h1 className="text-3xl font-bold text-blue-600">饭店记账</h1>
+          <h1 className="text-3xl font-bold text-blue-600">汤圆记账</h1>
           <p className="text-gray-500 mt-2 text-sm">专业记账管理工具</p>
         </div>
 
