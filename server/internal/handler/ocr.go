@@ -195,7 +195,7 @@ func (h *OCRHandler) Analyze(c *gin.Context) {
 			var llmErrMsg string
 			if suggestions, lerr := h.llmSvc.Analyze(c.Request.Context(), tenantID, existing.FilePath, rawTexts, categoryItems); lerr != nil {
 				log.Printf("[LLM] tenant=%d analyze error: %v", tenantID, lerr)
-				llmErrMsg = lerr.Error()
+				llmErrMsg = friendlyLLMError(lerr)
 			} else {
 				llmSuggestions = suggestions
 			}
@@ -280,7 +280,7 @@ func (h *OCRHandler) Analyze(c *gin.Context) {
 	var llmErrMsg string
 	if suggestions, lerr := h.llmSvc.Analyze(c.Request.Context(), tenantID, savedPath, rawTexts, categoryItems); lerr != nil {
 		log.Printf("[LLM] tenant=%d analyze error: %v", tenantID, lerr)
-		llmErrMsg = lerr.Error()
+		llmErrMsg = friendlyLLMError(lerr)
 	} else {
 		llmSuggestions = suggestions
 		for i, s := range suggestions {
@@ -311,4 +311,39 @@ func extractRawTextStrings(texts []dto.OCRText) []string {
 		result = append(result, t.Text)
 	}
 	return result
+}
+
+// friendlyLLMError 将 LLM 技术性错误转换为用户友好的中文提示
+func friendlyLLMError(err error) string {
+	msg := err.Error()
+	
+	// 检测视觉模式不支持的情况
+	if contains(msg, "unknown variant") || contains(msg, "image_url") || contains(msg, "binary") {
+		return "当前模型不支持图片视觉识别，请在设置-AI设置-识别模式改为文字模式（将 OCR 文本发给 AI）或更换为支持视觉的模型"
+	}
+	
+	// 检测 API 调用失败
+	if contains(msg, "400") || contains(msg, "401") || contains(msg, "403") {
+		return "LLM API 调用失败，请检查 API Key 和模型配置是否正确"
+	}
+	
+	if contains(msg, "timeout") || contains(msg, "超时") {
+		return "LLM 分析超时，请稍后重试"
+	}
+	
+	// 默认提示
+	return "AI 分析失败：" + msg
+}
+
+func contains(s, substr string) bool {
+	return len(s) >= len(substr) && indexOf(s, substr) >= 0
+}
+
+func indexOf(s, substr string) int {
+	for i := 0; i <= len(s)-len(substr); i++ {
+		if s[i:i+len(substr)] == substr {
+			return i
+		}
+	}
+	return -1
 }

@@ -290,20 +290,22 @@ export const statisticsApi = {
 
 // OCR
 export const uploadApi = {
-  ocr: (file: File, originalHash?: string) => {
+  ocr: (file: File, originalHash?: string, config?: { signal?: AbortSignal }) => {
     const form = new FormData()
     form.append('file', file)
     if (originalHash) form.append('original_hash', originalHash)
     return api.post<ApiResponse<OcrResult & { duplicate?: boolean; file_name?: string }>>('/upload/ocr', form, {
       headers: { 'Content-Type': 'multipart/form-data' },
+      signal: config?.signal,
     })
   },
-  ocrAnalyze: (file: File, originalHash?: string) => {
+  ocrAnalyze: (file: File, originalHash?: string, config?: { signal?: AbortSignal }) => {
     const form = new FormData()
     form.append('file', file)
     if (originalHash) form.append('original_hash', originalHash)
     return api.post<ApiResponse<OcrAnalyzeResult & { duplicate?: boolean; file_name?: string }>>('/upload/ocr/analyze', form, {
       headers: { 'Content-Type': 'multipart/form-data' },
+      signal: config?.signal,
     })
   },
 }

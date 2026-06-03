@@ -68,7 +68,12 @@
       "Bash(cd /Users/chen/IdeaProjects/fandianjizhang/web && npx tsc --noEmit 2>&1 | head -50)",
       "Bash(cd /Users/chen/IdeaProjects/fandianjizhang/server && go build -o /dev/null ./cmd/ 2>&1)",
       "Bash(make build:*)",
-      "Bash(cd /Users/chen/IdeaProjects/fandianjizhang && make prod 2>&1)"
+      "Bash(cd /Users/chen/IdeaProjects/fandianjizhang && make prod 2>&1)",
+      "Bash(git push:*)",
+      "Bash(git stash:*)",
+      "Bash(git stash drop)",
+      "Bash(git add README.md && git commit -m \"add online address to README\" && git push)",
+      "Bash(npm run dev 2>&1 | head -30)"
     ]
   }
 }

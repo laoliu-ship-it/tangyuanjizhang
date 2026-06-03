@@ -702,6 +702,8 @@ export default function TransactionForm({ open, onClose, onSuccess, initialData,
     } else {
       setNoSlotDrafts(prev => prev.filter((_, j) => j !== i))
     }
+    // 删除草稿后清空表单金额/备注/商户，防止残留数据被"记一笔"重复提交
+    patchForm({ amount: '', note: '', merchantId: 0, merchantName: '' })
   }
 
   // ── 编辑弹窗：打开 ────────────────────────────────────────
@@ -1811,7 +1813,7 @@ export default function TransactionForm({ open, onClose, onSuccess, initialData,
   if (isMobile) {
     return (
       <>
-        {Toast}{Lightbox}{CtxMenuEl}{MobileReviewSheet}
+        {Toast}{Lightbox}{CtxMenuEl}{MobileReviewSheet}{DraftEditModal}
         <div className="fixed inset-0 bg-white z-50 flex flex-col overflow-y-auto">
           {HiddenInput}
           <div className="flex items-center justify-between p-4 border-b border-gray-100 sticky top-0 bg-white z-10">

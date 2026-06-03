@@ -264,7 +264,17 @@ export default function LLMSettings() {
               ))}
             </div>
             {mode === 'vision' && (
-              <p className="text-xs text-amber-600 mt-2">视觉模式需要模型支持图片输入（如 gpt-4o、claude-3 等）</p>
+              <div className="mt-3 p-3 bg-amber-50 border border-amber-200 rounded-lg">
+                <p className="text-xs text-amber-800 font-medium mb-1">视觉模式需要模型支持图片输入</p>
+                <p className="text-xs text-amber-700">
+                  支持的模型：gpt-4o、gpt-4o-mini、claude-3、deepseek-chat 等
+                </p>
+                {(provider === 'deepseek') && (
+                  <p className="text-xs text-red-600 mt-2 font-medium">
+                    ⚠️ 注意：deepseek-v4-flash 和 deepseek-v4-pro 不支持视觉模式，请使用 deepseek-chat 或切换为文字模式
+                  </p>
+                )}
+              </div>
             )}
           </div>
         </>

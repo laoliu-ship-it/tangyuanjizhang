@@ -1,4 +1,5 @@
 import { initializeImageMagick, ImageMagick, MagickFormat } from '@imagemagick/magick-wasm'
+import { createSHA256 } from 'hash-wasm'
 
 const MAGICK_WASM_URL = '/magick.wasm'
 
@@ -183,8 +184,22 @@ export function getImageEngineStatus(): 'canvas' | 'wasm-loading' | 'wasm-ready'
 /** 对原始文件计算 SHA-256 hash，用于服务端去重 */
 export async function fileSHA256(file: File): Promise<string> {
   const buf = await file.arrayBuffer()
-  const hashBuf = await crypto.subtle.digest('SHA-256', buf)
-  return Array.from(new Uint8Array(hashBuf))
-    .map(b => b.toString(16).padStart(2, '0'))
-    .join('')
+
+  // 优先使用原生 crypto.subtle（更快）
+  if (typeof crypto !== 'undefined' && crypto.subtle) {
+    try {
+      const hashBuf = await crypto.subtle.digest('SHA-256', buf)
+      return Array.from(new Uint8Array(hashBuf))
+        .map(b => b.toString(16).padStart(2, '0'))
+        .join('')
+    } catch {
+      // 降级到 hash-wasm
+    }
+  }
+
+  // 使用 hash-wasm 纯 JS 实现作为降级方案
+  const hasher = await createSHA256()
+  hasher.init()
+  hasher.update(new Uint8Array(buf))
+  return hasher.digest('hex')
 }
