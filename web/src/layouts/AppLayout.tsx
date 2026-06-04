@@ -76,20 +76,20 @@ export default function AppLayout() {
 
   if (isMobile) {
     return (
-      <div className="flex flex-col min-h-screen bg-gray-50">
+      <div className="flex flex-col bg-gray-50 h-screen-dvh">
         {/* 移动端顶部栏 */}
-        <header className="bg-white border-b border-gray-100 px-4 py-3 flex items-center justify-between sticky top-0 z-10">
+        <header className="bg-white border-b border-gray-100 px-4 py-3 flex items-center justify-between flex-shrink-0">
           <span className="text-lg font-bold text-blue-600">汤圆记账</span>
           <TenantSwitcher />
         </header>
 
         {/* 内容区域 */}
-        <main className="flex-1 overflow-y-auto pb-20">
+        <main className="flex-1 overflow-y-auto overflow-x-hidden">
           <Outlet />
         </main>
 
         {/* 移动端底部 Tab 导航 */}
-        <nav className="fixed bottom-0 inset-x-0 bg-white border-t border-gray-100 z-10">
+        <nav className="bg-white border-t border-gray-100 flex-shrink-0 safe-area-bottom">
           <div className="flex">
             {navItems.map(item => (
               <NavLink

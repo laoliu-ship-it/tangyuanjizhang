@@ -88,11 +88,28 @@ type TransactionImage struct {
 	OCRAmount     float64   `gorm:"type:decimal(12,2);default:0" json:"ocr_amount"`
 	OCRDate       string    `gorm:"size:20;default:''" json:"ocr_date"`
 	OCRMerchant   string    `gorm:"size:100;default:''" json:"ocr_merchant"`
-	OCRRawTexts   string    `gorm:"type:text" json:"ocr_raw_texts"` // JSON数组字符串
+	OCRRawTexts   string    `gorm:"type:text" json:"ocr_raw_texts"`
 	CreatedAt     time.Time `json:"created_at"`
 }
 
 func (TransactionImage) TableName() string { return "transaction_images" }
+
+// OcrRecord OCR识别结果表（按租户隔离，防止跨租户偷 token）
+type OcrRecord struct {
+	ID           uint64    `gorm:"primaryKey;autoIncrement" json:"id"`
+	TenantID     uint64    `gorm:"not null;index" json:"tenant_id"`
+	ImagePath    string    `gorm:"size:500;not null" json:"image_path"`
+	ImageHash    string    `gorm:"size:64;default:''" json:"image_hash"`
+	ImageSize    int64     `gorm:"default:0" json:"image_size"`
+	AIMode       bool      `gorm:"default:false" json:"ai_mode"`
+	Amount       float64   `gorm:"type:decimal(12,2);default:0" json:"amount"`
+	Date         string    `gorm:"size:50;default:''" json:"date"`
+	MerchantName string    `gorm:"size:200;default:''" json:"merchant_name"`
+	RawTexts     string    `gorm:"type:text;default:''" json:"raw_texts"` // JSON []string
+	CreatedAt    time.Time `json:"created_at"`
+}
+
+func (OcrRecord) TableName() string { return "ocr_records" }
 
 // Merchant 商户表（租户级别）
 type Merchant struct {
@@ -137,6 +154,17 @@ type MediaFile struct {
 
 func (MediaFile) TableName() string { return "media_files" }
 
+// TenantSettings 租户通用设置表（每个租户一条记录，不存在时用默认值）
+type TenantSettings struct {
+	ID                   uint64    `gorm:"primaryKey;autoIncrement" json:"id"`
+	TenantID             uint64    `gorm:"not null;uniqueIndex" json:"tenant_id"`
+	RequireExpenseImage  bool      `gorm:"default:true" json:"require_expense_image"` // 支出记录是否必须上传图片
+	CreatedAt            time.Time `json:"created_at"`
+	UpdatedAt            time.Time `json:"updated_at"`
+}
+
+func (TenantSettings) TableName() string { return "tenant_settings" }
+
 // PlatformAdmin 平台管理员表
 type PlatformAdmin struct {
 	ID           uint64     `gorm:"primaryKey;autoIncrement" json:"id"`
@@ -148,3 +176,33 @@ type PlatformAdmin struct {
 }
 
 func (PlatformAdmin) TableName() string { return "platform_admins" }
+
+// PlatformConfig 平台配置表（键值对存储）
+type PlatformConfig struct {
+	ID          uint64    `gorm:"primaryKey;autoIncrement" json:"id"`
+	ConfigKey   string    `gorm:"uniqueIndex;size:50;not null" json:"config_key"`   // 配置键
+	ConfigValue string    `gorm:"size:500;not null" json:"config_value"`            // 配置值
+	Description string    `gorm:"size:200;default:''" json:"description"`           // 配置描述
+	UpdatedAt   time.Time `json:"updated_at"`
+}
+
+func (PlatformConfig) TableName() string { return "platform_configs" }
+
+// 预置配置键常量
+const (
+	ConfigKeyCacheType         = "cache_type"          // "file" 或 "text"
+	ConfigKeyCacheTTLMinutes   = "cache_ttl_minutes"   // 缓存分钟数
+	ConfigKeyOCRCacheEnabled   = "ocr_cache_enabled"   // "true" 或 "false"
+	ConfigKeyLLMCacheEnabled   = "llm_cache_enabled"   // "true" 或 "false"
+)
+
+// 默认配置值
+var DefaultPlatformConfigs = map[string]struct {
+	Value       string
+	Description string
+}{
+	ConfigKeyCacheType:         {Value: "file", Description: "缓存类型：file（文件SHA256）或 text（文本内容）"},
+	ConfigKeyCacheTTLMinutes:   {Value: "30", Description: "缓存有效期（分钟）"},
+	ConfigKeyOCRCacheEnabled:   {Value: "true", Description: "是否启用 OCR 缓存"},
+	ConfigKeyLLMCacheEnabled:   {Value: "true", Description: "是否启用 LLM 缓存"},
+}

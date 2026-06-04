@@ -67,6 +67,17 @@ export interface PlatformUserDetailResp {
   media_count: number
 }
 
+export interface PlatformConfigItem {
+  key: string
+  value: string
+  description: string
+  updated_at: string
+}
+
+export interface PlatformConfigListResp {
+  items: PlatformConfigItem[]
+}
+
 export const platformAdminApi = {
   login: (data: { email: string; password: string }) =>
     platformApi.post<ApiResponse<PlatformLoginResp>>('/auth/login', data),
@@ -79,6 +90,13 @@ export const platformAdminApi = {
 
   getUserDetail: (userId: number) =>
     platformApi.get<ApiResponse<PlatformUserDetailResp>>(`/users/${userId}`),
+
+  // 配置管理
+  getConfigs: () =>
+    platformApi.get<ApiResponse<PlatformConfigListResp>>('/configs'),
+
+  updateConfig: (key: string, value: string) =>
+    platformApi.put<ApiResponse<PlatformConfigItem>>(`/configs/${key}`, { value }),
 }
 
 export default platformApi

@@ -3,10 +3,11 @@ import Members from './Members'
 import Categories from './Categories'
 import LLMSettings from './LLMSettings'
 import Roles from './Roles'
+import GeneralSettings from './GeneralSettings'
 import { tenantApi } from '../../services/api'
 import { useTenantStore } from '../../store/tenant'
 
-type Tab = 'members' | 'roles' | 'categories' | 'llm'
+type Tab = 'general' | 'members' | 'roles' | 'categories' | 'llm'
 
 const SUFFIX = '的记账本'
 
@@ -65,8 +66,16 @@ function TenantRename() {
   )
 }
 
+const TABS: { key: Tab; label: string }[] = [
+  { key: 'general', label: '通用' },
+  { key: 'members', label: '成员管理' },
+  { key: 'roles', label: '角色权限' },
+  { key: 'categories', label: '分类管理' },
+  { key: 'llm', label: 'AI 设置' },
+]
+
 export default function TenantSettings() {
-  const [activeTab, setActiveTab] = useState<Tab>('members')
+  const [activeTab, setActiveTab] = useState<Tab>('general')
 
   return (
     <div className="p-4 md:p-6 max-w-3xl mx-auto">
@@ -74,49 +83,23 @@ export default function TenantSettings() {
       <TenantRename />
 
       {/* Tab 切换 */}
-      <div className="flex bg-gray-100 rounded-xl p-1 mb-6 w-fit">
-        <button
-          onClick={() => setActiveTab('members')}
-          className={`px-6 py-2 rounded-lg text-sm font-medium transition-colors ${
-            activeTab === 'members'
-              ? 'bg-white text-gray-800 shadow-sm'
-              : 'text-gray-500 hover:text-gray-700'
-          }`}
-        >
-          成员管理
-        </button>
-        <button
-          onClick={() => setActiveTab('roles')}
-          className={`px-6 py-2 rounded-lg text-sm font-medium transition-colors ${
-            activeTab === 'roles'
-              ? 'bg-white text-gray-800 shadow-sm'
-              : 'text-gray-500 hover:text-gray-700'
-          }`}
-        >
-          角色权限
-        </button>
-        <button
-          onClick={() => setActiveTab('categories')}
-          className={`px-6 py-2 rounded-lg text-sm font-medium transition-colors ${
-            activeTab === 'categories'
-              ? 'bg-white text-gray-800 shadow-sm'
-              : 'text-gray-500 hover:text-gray-700'
-          }`}
-        >
-          分类管理
-        </button>
-        <button
-          onClick={() => setActiveTab('llm')}
-          className={`px-6 py-2 rounded-lg text-sm font-medium transition-colors ${
-            activeTab === 'llm'
-              ? 'bg-white text-gray-800 shadow-sm'
-              : 'text-gray-500 hover:text-gray-700'
-          }`}
-        >
-          AI 设置
-        </button>
+      <div className="flex flex-wrap bg-gray-100 rounded-xl p-1 mb-6 w-fit gap-0.5">
+        {TABS.map(({ key, label }) => (
+          <button
+            key={key}
+            onClick={() => setActiveTab(key)}
+            className={`px-5 py-2 rounded-lg text-sm font-medium transition-colors ${
+              activeTab === key
+                ? 'bg-white text-gray-800 shadow-sm'
+                : 'text-gray-500 hover:text-gray-700'
+            }`}
+          >
+            {label}
+          </button>
+        ))}
       </div>
 
+      {activeTab === 'general' && <GeneralSettings />}
       {activeTab === 'members' && <Members />}
       {activeTab === 'roles' && <Roles />}
       {activeTab === 'categories' && <Categories />}

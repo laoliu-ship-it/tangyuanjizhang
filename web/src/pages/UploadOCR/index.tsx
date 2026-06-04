@@ -1,8 +1,8 @@
 import { useState, useRef, useCallback, useEffect } from 'react'
 import dayjs from 'dayjs'
-import { uploadApi, categoryApi, llmApi, type OcrAnalyzeResult, type OcrResult, type LLMSuggestion, type Category } from '../../services/api'
+import { uploadApi, categoryApi, llmApi, type OcrResult, type LLMSuggestion, type Category } from '../../services/api'
 import { useResponsive } from '../../hooks/useResponsive'
-import { toWebP, fileSHA256, getImageEngineStatus } from '../../utils/imageUtils'
+import { toWebP, fileSHA256 } from '../../utils/imageUtils'
 
 const OCR_TIMEOUT = 25000 // 25 秒超时，略短于服务端 30 秒
 
@@ -11,8 +11,10 @@ interface ImageItem {
   webpFile?: File
   preview: string
   hash: string
-  ocrResult?: OcrAnalyzeResult
-  status: 'pending' | 'compressing' | 'loading' | 'success' | 'timeout' | 'error'
+  ocrResult?: OcrResult
+  llmResult?: LLMSuggestion[]
+  llmError?: string
+  status: 'pending' | 'compressing' | 'ocr_loading' | 'llm_loading' | 'success' | 'timeout' | 'error'
   error?: string
 }
 
@@ -33,8 +35,6 @@ export default function UploadOCR() {
   const [editCategoryId, setEditCategoryId] = useState<number | ''>('')
   const [editNote, setEditNote] = useState('')
   const [saving, setSaving] = useState(false)
-
-  const [wasmLoading, setWasmLoading] = useState(false)
 
   // 加载 LLM 配置
   useEffect(() => {
@@ -67,71 +67,104 @@ export default function UploadOCR() {
     }
   }
 
-  async function processFile(index: number, quality = 0.85) {
-    const img = images[index]
-    if (!img) return
-
-    const engineStatus = getImageEngineStatus()
-    if (engineStatus === 'wasm-loading' || engineStatus === 'unavailable') {
-      setWasmLoading(true)
+  async function processFile(img: ImageItem, index: number, quality = 0.85) {
+    console.log(`[OCR] processFile 开始，index=${index}, quality=${quality}`)
+    if (!img) {
+      console.error('[OCR] img 为空，退出')
+      return
     }
 
     updateImage(index, { status: 'compressing' })
+    console.log('[OCR] 状态更新为 compressing')
 
     try {
+      console.log('[OCR] 开始计算 SHA256')
       const originalHash = await fileSHA256(img.file)
+      console.log(`[OCR] SHA256: ${originalHash}`)
+
+      console.log('[OCR] 开始图片压缩')
       const result = await toWebP(img.file, quality)
-      setWasmLoading(false)
+      console.log(`[OCR] 压缩完成, oversized=${result.oversized}, size=${result.file?.size}`)
 
       // 图片超过 1MB，压缩重试
       if (result.oversized) {
         const nextQuality = Math.max(0.1, quality - 0.1)
         if (nextQuality >= 0.3) {
-          return processFile(index, nextQuality)
+          console.log(`[OCR] 图片过大，降低质量重试: ${nextQuality}`)
+          return processFile(img, index, nextQuality)
         }
-        // 质量已很低，继续上传
       }
 
       updateImage(index, {
         webpFile: result.file,
         hash: originalHash,
-        status: 'loading',
+        status: 'ocr_loading',
       })
+      console.log('[OCR] 状态更新为 ocr_loading，准备发送 OCR 请求')
 
-      // 发起 OCR 请求，带超时控制
+      // === 第一步：OCR 识别 ===
       const controller = new AbortController()
       const timeoutId = setTimeout(() => controller.abort(), OCR_TIMEOUT)
 
       try {
-        let ocr: OcrAnalyzeResult
-        if (llmEnabled) {
-          const ocrRes = await uploadApi.ocrAnalyze(result.file!, originalHash, { signal: controller.signal })
-          ocr = ocrRes.data.data
-        } else {
-          const res = await uploadApi.ocr(result.file!, originalHash, { signal: controller.signal })
-          const raw = res.data.data as OcrResult
-          ocr = {
-            image_path: raw.image_path,
-            ai_mode: raw.ai_mode,
-            amount: raw.amount,
-            date: raw.date,
-            merchant_id: raw.merchant_id,
-            merchant_name: raw.merchant_name ?? '',
-            raw_texts: raw.raw_texts,
-          }
-        }
+        console.log('[OCR] 发送 ocr 请求')
+        const res = await uploadApi.ocr(result.file!, originalHash, { signal: controller.signal })
+        console.log('[OCR] ocr 响应:', res.data)
         clearTimeout(timeoutId)
 
-        updateImage(index, {
-          ocrResult: ocr,
-          status: 'success',
-        })
+        const ocr = res.data.data as OcrResult
+        updateImage(index, { ocrResult: ocr })
 
-        // 如果是当前选中的图片，自动填充表单
-        if (index === selectedIndex) {
-          if (ocr.llm && ocr.llm.length > 0) {
-            applyLLM(ocr.llm[0])
+        // === 第二步：LLM 分析（如果启用） ===
+        let llmSuggestions: LLMSuggestion[] = []
+        if (llmEnabled) {
+          updateImage(index, { status: 'llm_loading' })
+          console.log('[LLM] 状态更新为 llm_loading，准备发送 LLM 分析请求')
+
+          // 加载分类列表
+          let catItems: { id: number; name: string; type: string }[] = []
+          if (categories.length === 0) {
+            try {
+              const catRes = await categoryApi.list()
+              setCategories(catRes.data.data)
+              catItems = catRes.data.data.map(c => ({ id: c.id, name: c.name, type: c.type }))
+            } catch (e) {
+              console.error('[LLM] 加载分类失败:', e)
+            }
           } else {
+            catItems = categories.map(c => ({ id: c.id, name: c.name, type: c.type }))
+          }
+
+          try {
+            const llmRes = await llmApi.analyze({
+              image_path: ocr.image_path,
+              raw_texts: ocr.raw_texts,
+              categories: catItems,
+            })
+            console.log('[LLM] analyze 响应:', llmRes.data)
+
+            const llmData = llmRes.data.data
+            if (llmData.error) {
+              updateImage(index, { status: 'success', llmError: llmData.error })
+            } else {
+              llmSuggestions = llmData.suggestions || []
+              updateImage(index, { status: 'success', llmResult: llmSuggestions })
+            }
+          } catch (llmErr: unknown) {
+            console.error('[LLM] analyze 失败:', llmErr)
+            const axErr = llmErr as { response?: { data?: { message?: string } } }
+            const msg = axErr.response?.data?.message || 'AI 分析失败'
+            updateImage(index, { status: 'success', llmError: msg })
+          }
+        } else {
+          updateImage(index, { status: 'success' })
+        }
+
+        // 如果是当前选中的图片，自动填充表单（直接使用刚获取的数据）
+        if (index === selectedIndex) {
+          if (llmSuggestions.length > 0) {
+            applyLLM(llmSuggestions[0])
+          } else if (ocr) {
             setEditAmount(String(ocr.amount || ''))
             setEditDate(ocr.date || dayjs().format('YYYY-MM-DD'))
             setEditMerchant(ocr.merchant_name || '')
@@ -144,15 +177,14 @@ export default function UploadOCR() {
         clearTimeout(timeoutId)
         const isTimeout = (err as DOMException)?.name === 'AbortError'
         const axErr = err as { response?: { status?: number; data?: { message?: string } } }
-        const msg = axErr.response?.data?.message
+        const msg = axErr.response?.data?.message || ''
 
         updateImage(index, {
           status: isTimeout ? 'timeout' : 'error',
-          error: isTimeout ? '识别超时，请重试' : (msg || '识别失败，请重试'),
+          error: isTimeout ? 'OCR识别超时，请重试' : msg || 'OCR识别失败，请重试',
         })
       }
     } catch (err: unknown) {
-      setWasmLoading(false)
       updateImage(index, {
         status: 'error',
         error: '图片处理失败',
@@ -169,12 +201,15 @@ export default function UploadOCR() {
   }
 
   function handleRecognize(index: number) {
-    processFile(index)
+    const img = images[index]
+    if (img) processFile(img, index)
   }
 
   function handleRetry(index: number) {
-    updateImage(index, { status: 'loading', error: undefined, ocrResult: undefined })
-    processFile(index)
+    const img = images[index]
+    if (!img) return
+    updateImage(index, { status: 'ocr_loading', error: undefined, ocrResult: undefined, llmResult: undefined, llmError: undefined })
+    processFile(img, index)
   }
 
   function handleDeleteImage(index: number) {
@@ -197,26 +232,40 @@ export default function UploadOCR() {
   }
 
   function handleFileChange(e: React.ChangeEvent<HTMLInputElement>) {
+    console.log('[上传] 步骤1: handleFileChange 开始')
     const files = Array.from(e.target.files ?? [])
-    if (files.length === 0) return
+    console.log(`[上传] 步骤2: 选择了 ${files.length} 个文件`, files)
+    if (files.length === 0) {
+      console.log('[上传] 没有选择文件，退出')
+      return
+    }
 
+    const startIndex = images.length
     const newImages: ImageItem[] = files.map(file => ({
       file,
       preview: URL.createObjectURL(file),
       hash: '',
       status: 'pending' as const,
     }))
+    console.log(`[上传] 步骤3: 创建了 ${newImages.length} 个预览`)
 
     setImages(prev => {
       const all = [...prev, ...newImages]
-      // 如果之前没有图片，选中第一张
       if (prev.length === 0) {
         setSelectedIndex(0)
       }
+      console.log(`[上传] 步骤4: setImages 完成，共 ${all.length} 张图片`)
       return all
     })
 
+    console.log(`[上传] 步骤5: 准备调用 processFile，startIndex=${startIndex}`)
+    newImages.forEach((img, i) => {
+      console.log(`[上传] 步骤6: 即将调用 processFile 第 ${i} 张`, img.file.name)
+      setTimeout(() => processFile(img, startIndex + i), 100)
+    })
+
     e.target.value = ''
+    console.log('[上传] 步骤7: handleFileChange 结束')
   }
 
   function handleDrop(e: React.DragEvent) {
@@ -224,6 +273,7 @@ export default function UploadOCR() {
     const files = Array.from(e.dataTransfer.files).filter(f => f.type.startsWith('image/'))
     if (files.length === 0) return
 
+    const startIndex = images.length
     const newImages: ImageItem[] = files.map(file => ({
       file,
       preview: URL.createObjectURL(file),
@@ -237,6 +287,11 @@ export default function UploadOCR() {
         setSelectedIndex(0)
       }
       return all
+    })
+
+    // 自动开始识别新添加的图片
+    newImages.forEach((img, i) => {
+      setTimeout(() => processFile(img, startIndex + i), 100)
     })
   }
 
@@ -249,8 +304,8 @@ export default function UploadOCR() {
     const img = images[index]
     if (img?.ocrResult) {
       // 已有识别结果，填充表单
-      if (img.ocrResult.llm && img.ocrResult.llm.length > 0) {
-        applyLLM(img.ocrResult.llm[0])
+      if (img.llmResult && img.llmResult.length > 0) {
+        applyLLM(img.llmResult[0])
       } else {
         setEditAmount(String(img.ocrResult.amount || ''))
         setEditDate(img.ocrResult.date || dayjs().format('YYYY-MM-DD'))
@@ -388,45 +443,67 @@ export default function UploadOCR() {
               >
                 <img src={img.preview} alt="" className="w-full h-full object-cover" />
                 {/* 状态标识 */}
-                <div className="absolute inset-0 bg-black/40 flex items-center justify-center">
-                  {img.status === 'loading' && (
-                    <div className="w-6 h-6 border-2 border-white border-t-transparent rounded-full animate-spin" />
+                <div className="absolute inset-0 flex items-center justify-center">
+                  {img.status === 'ocr_loading' && (
+                    <div className="absolute inset-0 bg-black/40 flex items-center justify-center">
+                      <div className="w-6 h-6 border-2 border-white border-t-transparent rounded-full animate-spin" />
+                    </div>
+                  )}
+                  {img.status === 'llm_loading' && (
+                    <div className="absolute inset-0 bg-purple-500/40 flex items-center justify-center">
+                      <div className="w-6 h-6 border-2 border-white border-t-transparent rounded-full animate-spin" />
+                    </div>
                   )}
                   {img.status === 'compressing' && (
-                    <div className="w-6 h-6 border-2 border-blue-300 border-t-transparent rounded-full animate-spin" />
+                    <div className="absolute inset-0 bg-black/40 flex items-center justify-center">
+                      <div className="w-6 h-6 border-2 border-blue-300 border-t-transparent rounded-full animate-spin" />
+                    </div>
                   )}
                   {img.status === 'success' && (
-                    <span className="text-white text-lg">✓</span>
+                    <div className="absolute inset-0 bg-black/20 flex items-center justify-center">
+                      <span className="text-white text-lg drop-shadow-md">✓</span>
+                    </div>
                   )}
                   {(img.status === 'timeout' || img.status === 'error') && (
-                    <button
-                      onClick={(e) => {
-                        e.stopPropagation()
-                        handleRetry(idx)
-                      }}
-                      title={img.error ?? '点击重试'}
-                      className="w-9 h-9 rounded-full bg-black/50 hover:bg-black/70 flex items-center justify-center transition-colors"
-                    >
-                      <svg className="w-5 h-5 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2}
-                          d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
-                      </svg>
-                    </button>
+                    <>
+                      {/* 半透明遮罩 */}
+                      <div className="absolute inset-0 bg-red-500/40" />
+                      {/* 中心重试按钮 */}
+                      <button
+                        onClick={(e) => {
+                          e.stopPropagation()
+                          handleRetry(idx)
+                        }}
+                        title={img.error ?? '点击重试'}
+                        className="w-14 h-14 rounded-full bg-white shadow-lg hover:bg-gray-50 flex items-center justify-center transition-all hover:scale-110 border-2 border-red-500"
+                      >
+                        <svg className="w-7 h-7 text-red-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5}
+                            d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
+                        </svg>
+                      </button>
+                    </>
                   )}
                   {img.status === 'pending' && (
-                    <span className="text-gray-300 text-xs">待识别</span>
+                    <div className="absolute inset-0 bg-black/20 flex items-center justify-center">
+                      <span className="text-gray-300 text-xs">待识别</span>
+                    </div>
                   )}
                 </div>
-                {/* 删除按钮 */}
+                {/* 删除按钮 - 错误状态时红色更显眼 */}
                 <button
                   onClick={(e) => {
                     e.stopPropagation()
                     handleDeleteImage(idx)
                   }}
-                  className="absolute top-0.5 right-0.5 w-5 h-5 bg-red-500 rounded-full flex items-center justify-center hover:bg-red-600"
+                  className={`absolute -top-1 -right-1 w-5 h-5 rounded-full flex items-center justify-center shadow-md transition-colors ${
+                    img.status === 'timeout' || img.status === 'error'
+                      ? 'bg-red-500 hover:bg-red-600'
+                      : 'bg-gray-400/80 hover:bg-gray-500'
+                  }`}
                 >
                   <svg className="w-3 h-3 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M6 18L18 6M6 6l12 12" />
                   </svg>
                 </button>
               </div>
@@ -442,10 +519,9 @@ export default function UploadOCR() {
                   <p className="text-gray-500 mb-3">点击下方按钮开始识别</p>
                   <button
                     onClick={() => handleRecognize(selectedIndex)}
-                    disabled={wasmLoading}
-                    className="px-6 py-2.5 bg-blue-600 hover:bg-blue-700 disabled:bg-blue-300 text-white font-medium rounded-xl transition-colors"
+                    className="px-6 py-2.5 bg-blue-600 hover:bg-blue-700 text-white font-medium rounded-xl transition-colors"
                   >
-                    {wasmLoading ? '加载引擎中...' : '开始识别'}
+                    开始识别
                   </button>
                 </div>
               )}
@@ -457,10 +533,17 @@ export default function UploadOCR() {
                 </div>
               )}
 
-              {selectedImage.status === 'loading' && (
+              {selectedImage.status === 'ocr_loading' && (
                 <div className="flex flex-col items-center gap-3 py-6">
                   <div className="w-10 h-10 border-3 border-blue-500 border-t-transparent rounded-full animate-spin" />
-                  <p className="text-gray-500">识别中，请稍候...</p>
+                  <p className="text-gray-500">OCR 识别中...</p>
+                </div>
+              )}
+
+              {selectedImage.status === 'llm_loading' && (
+                <div className="flex flex-col items-center gap-3 py-6">
+                  <div className="w-10 h-10 border-3 border-purple-500 border-t-transparent rounded-full animate-spin" />
+                  <p className="text-purple-500">AI 分析中...</p>
                 </div>
               )}
 
@@ -486,12 +569,12 @@ export default function UploadOCR() {
               {selectedImage.status === 'success' && selectedImage.ocrResult && (
                 <>
                   {/* LLM 建议卡片 */}
-                  {selectedImage.ocrResult.llm && selectedImage.ocrResult.llm.length > 0 && (
+                  {selectedImage.llmResult && selectedImage.llmResult.length > 0 && (
                     <div className="mb-4 bg-purple-50 border border-purple-100 rounded-xl p-3 space-y-2">
                       <p className="text-xs text-purple-500 font-medium">
-                        AI 建议 · {selectedImage.ocrResult.llm.length} 笔
+                        AI 建议 · {selectedImage.llmResult.length} 笔
                       </p>
-                      {selectedImage.ocrResult.llm.map((llm, i) => (
+                      {selectedImage.llmResult.map((llm, i) => (
                         <div key={i} className="bg-white rounded-lg p-2">
                           <div className="flex items-center justify-between gap-2 flex-wrap">
                             <div className="flex flex-wrap gap-x-3 gap-y-0.5 text-sm text-gray-600">
@@ -515,7 +598,7 @@ export default function UploadOCR() {
                       ))}
                     </div>
                   )}
-                  {!selectedImage.ocrResult.llm && selectedImage.ocrResult.llm_error && (
+                  {!selectedImage.llmResult && selectedImage.llmError && (
                     <div className="mb-4 bg-amber-50 border border-amber-200 rounded-xl p-3">
                       <div className="flex items-start gap-2">
                         <svg className="w-5 h-5 text-amber-500 flex-shrink-0 mt-0.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -524,7 +607,7 @@ export default function UploadOCR() {
                         </svg>
                         <div>
                           <p className="text-sm font-medium text-amber-800">AI 分析不可用</p>
-                          <p className="text-xs text-amber-700 mt-1">{selectedImage.ocrResult.llm_error}</p>
+                          <p className="text-xs text-amber-700 mt-1">{selectedImage.llmError}</p>
                         </div>
                       </div>
                     </div>

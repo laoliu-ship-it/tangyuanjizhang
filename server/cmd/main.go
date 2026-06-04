@@ -48,12 +48,33 @@ func main() {
 		&model.Tenant{},
 		&model.TenantMember{},
 		&model.TenantLLMConfig{},
+		&model.TenantSettings{},
 		&model.TenantRole{},
 		&model.RolePermission{},
 		&model.MediaFile{},
+		&model.OcrRecord{},
 		&model.PlatformAdmin{},
+		&model.PlatformConfig{},
 	); err != nil {
 		log.Fatalf("数据库迁移失败: %v", err)
+	}
+
+	// 初始化平台配置（不存在时插入默认值）
+	for key, def := range model.DefaultPlatformConfigs {
+		var cfg model.PlatformConfig
+		if err := db.Where("config_key = ?", key).First(&cfg).Error; err != nil {
+			cfg = model.PlatformConfig{
+				ConfigKey:   key,
+				ConfigValue: def.Value,
+				Description: def.Description,
+				UpdatedAt:   time.Now(),
+			}
+			if err := db.Create(&cfg).Error; err != nil {
+				log.Printf("[config] 初始化平台配置 %s 失败: %v", key, err)
+			} else {
+				log.Printf("[config] 初始化平台配置 %s = %s", key, def.Value)
+			}
+		}
 	}
 
 	// 初始化 Casbin EnforcerPool（按租户从数据库加载权限）
@@ -61,15 +82,6 @@ func main() {
 	if err != nil {
 		log.Fatalf("初始化 Casbin EnforcerPool 失败: %v", err)
 	}
-
-	// 初始化 OCR 引擎
-	ocrEngine, err := pkgocr.NewEngine(cfg)
-	if err != nil {
-		log.Fatalf("初始化 OCR 引擎失败: %v", err)
-	}
-
-	// 初始化本地存储
-	store := storage.NewLocalStorage(cfg.Upload.Path)
 
 	// 初始化 Repo 层
 	userRepo := repo.NewUserRepo(db)
@@ -79,32 +91,40 @@ func main() {
 	merchantRepo := repo.NewMerchantRepo(db)
 	transactionRepo := repo.NewTransactionRepo(db)
 	llmConfigRepo := repo.NewTenantLLMConfigRepo(db)
+	tenantSettingsRepo := repo.NewTenantSettingsRepo(db)
 	roleRepo := repo.NewTenantRoleRepo(db)
 	permRepo := repo.NewRolePermissionRepo(db)
 	mediaRepo := repo.NewMediaFileRepo(db)
+	ocrRecordRepo := repo.NewOcrRecordRepo(db)
 	platformAdminRepo := repo.NewPlatformAdminRepo(db)
 	platformStatsRepo := repo.NewPlatformStatsRepo(db)
+	platformConfigRepo := repo.NewPlatformConfigRepo(db)
+
+	// 初始化 OCR 引擎（带可配置缓存）
+	ocrEngine, err := pkgocr.NewEngine(cfg, platformConfigRepo)
+	if err != nil {
+		log.Fatalf("初始化 OCR 引擎失败: %v", err)
+	}
+
+	// 初始化本地存储
+	store := storage.NewLocalStorage(cfg.Upload.Path)
 
 	// 初始化 RBAC Service
 	rbacSvc := service.NewRBACService(roleRepo, permRepo, enforcerPool)
 
 	// 初始化 Service 层
 	authSvc := service.NewAuthService(userRepo, tenantRepo, tenantMemberRepo, categoryRepo, cfg)
-	tenantSvc := service.NewTenantService(tenantRepo, tenantMemberRepo, userRepo, categoryRepo)
+	tenantSvc := service.NewTenantService(tenantRepo, tenantMemberRepo, userRepo, categoryRepo, tenantSettingsRepo)
 	categorySvc := service.NewCategoryService(categoryRepo)
 	merchantSvc := service.NewMerchantService(merchantRepo)
 	transactionSvc := service.NewTransactionService(transactionRepo, categoryRepo, merchantRepo)
 	ocrSvc := service.NewOCRService(ocrEngine, cfg.OCR.AIMode)
 	statisticsSvc := service.NewStatisticsService(transactionRepo)
 	llmSvc := service.NewLLMService(cfg.LLM, llmConfigRepo)
-	// LLM 结果缓存：同文件内容 SHA256 相同则直接返回，默认 1 小时
-	llmCacheTTL := time.Duration(cfg.OCR.LLMCacheTTLSeconds) * time.Second
-	if llmCacheTTL <= 0 {
-		llmCacheTTL = time.Hour
-	}
+	// LLM 缓存：从平台配置读取缓存类型和 TTL
 	var llmSvcI service.LLMService = llmSvc
-	llmSvcI = pkgllm.NewCachedLLMService(llmSvcI, llmCacheTTL)
-	log.Printf("[LLM cache] enabled, TTL=%v", llmCacheTTL)
+	llmSvcI = pkgllm.NewCachedLLMService(llmSvcI, platformConfigRepo)
+	log.Printf("[LLM cache] enabled, config from platform_configs")
 
 	// 初始化 Handler 层
 	authHandler := handler.NewAuthHandler(authSvc)
@@ -112,13 +132,13 @@ func main() {
 	categoryHandler := handler.NewCategoryHandler(categorySvc)
 	merchantHandler := handler.NewMerchantHandler(merchantSvc)
 	transactionHandler := handler.NewTransactionHandler(transactionSvc)
-	ocrHandler := handler.NewOCRHandler(ocrSvc, merchantSvc, categorySvc, llmSvcI, store, mediaRepo, cfg.Upload)
-	llmHandler := handler.NewLLMHandler(llmSvcI)
+	ocrHandler := handler.NewOCRHandler(ocrSvc, merchantSvc, categorySvc, llmSvcI, store, mediaRepo, ocrRecordRepo, cfg.Upload)
+	llmHandler := handler.NewLLMHandler(llmSvcI, categorySvc, ocrRecordRepo)
 	statisticsHandler := handler.NewStatisticsHandler(statisticsSvc)
 	exporter := excel.NewExporter()
 	exportHandler := handler.NewExportHandler(transactionSvc, exporter, categoryRepo, transactionRepo)
 	rbacHandler := handler.NewRBACHandler(rbacSvc)
-	platformAdminSvc := service.NewPlatformAdminService(platformAdminRepo, platformStatsRepo, userRepo, cfg)
+	platformAdminSvc := service.NewPlatformAdminService(platformAdminRepo, platformStatsRepo, userRepo, platformConfigRepo, cfg)
 	platformAdminHandler := handler.NewPlatformAdminHandler(platformAdminSvc)
 
 	// 初始化路由
@@ -150,6 +170,12 @@ func main() {
 	tenant := api.Group("/")
 	tenant.Use(jwtMW, tenantMW)
 	{
+		// 租户通用设置（所有成员可读，admin 可写）
+		tenant.GET("/tenants/:id/settings", tenantHandler.GetSettings)
+		tenant.PUT("/tenants/:id/settings",
+			middleware.Casbin(enforcerPool, "tenant", "write"),
+			tenantHandler.UpdateSettings)
+
 		// 租户成员管理（admin 权限）
 		tenant.POST("/tenants/:id/members",
 			middleware.Casbin(enforcerPool, "tenant", "write"),
@@ -195,6 +221,10 @@ func main() {
 		tenant.PUT("/llm/config",
 			middleware.Casbin(enforcerPool, "tenant", "write"),
 			llmHandler.SaveConfig)
+		// LLM 单独分析（OCR 完成后调用）
+		tenant.POST("/llm/analyze",
+			middleware.Casbin(enforcerPool, "transaction", "write"),
+			llmHandler.Analyze)
 
 		// 交易记录批量创建（editor 及以上）
 		tenant.POST("/transactions/batch",
@@ -332,6 +362,9 @@ func main() {
 			platformAuth.GET("/dashboard", platformAdminHandler.Dashboard)
 			platformAuth.GET("/users", platformAdminHandler.ListUsers)
 			platformAuth.GET("/users/:id", platformAdminHandler.GetUserDetail)
+			// 配置管理
+			platformAuth.GET("/configs", platformAdminHandler.GetConfigs)
+			platformAuth.PUT("/configs/:key", platformAdminHandler.UpdateConfig)
 		}
 	}
 

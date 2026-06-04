@@ -1,6 +1,7 @@
 package handler
 
 import (
+	"encoding/json"
 	"fmt"
 	"log"
 	"net/http"
@@ -19,17 +20,18 @@ import (
 )
 
 type OCRHandler struct {
-	ocrSvc      service.OCRService
-	merchantSvc service.MerchantService
-	categorySvc service.CategoryService
-	llmSvc      service.LLMService
-	storage     storage.Storage
-	mediaRepo   repo.MediaFileRepo
-	uploadCfg   config.UploadConfig
+	ocrSvc       service.OCRService
+	merchantSvc  service.MerchantService
+	categorySvc  service.CategoryService
+	llmSvc       service.LLMService
+	storage      storage.Storage
+	mediaRepo    repo.MediaFileRepo
+	ocrRecordRepo repo.OcrRecordRepo
+	uploadCfg    config.UploadConfig
 }
 
-func NewOCRHandler(ocrSvc service.OCRService, merchantSvc service.MerchantService, categorySvc service.CategoryService, llmSvc service.LLMService, store storage.Storage, mediaRepo repo.MediaFileRepo, uploadCfg config.UploadConfig) *OCRHandler {
-	return &OCRHandler{ocrSvc: ocrSvc, merchantSvc: merchantSvc, categorySvc: categorySvc, llmSvc: llmSvc, storage: store, mediaRepo: mediaRepo, uploadCfg: uploadCfg}
+func NewOCRHandler(ocrSvc service.OCRService, merchantSvc service.MerchantService, categorySvc service.CategoryService, llmSvc service.LLMService, store storage.Storage, mediaRepo repo.MediaFileRepo, ocrRecordRepo repo.OcrRecordRepo, uploadCfg config.UploadConfig) *OCRHandler {
+	return &OCRHandler{ocrSvc: ocrSvc, merchantSvc: merchantSvc, categorySvc: categorySvc, llmSvc: llmSvc, storage: store, mediaRepo: mediaRepo, ocrRecordRepo: ocrRecordRepo, uploadCfg: uploadCfg}
 }
 
 // Upload 上传图片并进行 OCR 识别
@@ -68,18 +70,18 @@ func (h *OCRHandler) Upload(c *gin.Context) {
 			log.Printf("[OCR] tenant=%d media lookup error: %v", tenantID, err)
 		}
 		if existing != nil {
-			// 文件已存在，直接返回已有信息
 			log.Printf("[OCR] tenant=%d duplicate file detected, hash=%s, file=%s", tenantID, originalHash, existing.FileName)
-			c.JSON(http.StatusOK, dto.OK(gin.H{
-				"image_path":    "/" + existing.FilePath,
-				"ai_mode":       false,
-				"amount":        float64(0),
-				"date":          "",
-				"merchant_id":   0,
-				"merchant_name": "",
-				"raw_texts":     []string{},
-				"duplicate":     true,
-				"file_name":     existing.FileName,
+			c.JSON(http.StatusOK, dto.OK(dto.OCRResponse{
+				OcrID:        0, // 重复文件不创建新记录
+				ImagePath:    "/" + existing.FilePath,
+				AIMode:       false,
+				Amount:       0,
+				Date:         "",
+				MerchantID:   0,
+				MerchantName: "",
+				RawTexts:     []string{},
+				Duplicate:    true,
+				FileName:     existing.FileName,
 			}))
 			return
 		}
@@ -97,7 +99,6 @@ func (h *OCRHandler) Upload(c *gin.Context) {
 	if originalHash != "" {
 		fileSize := header.Size
 		if fileSize == 0 {
-			// 如果 FormFile header 没有 size，尝试从文件头推断
 			fileSize = -1
 		}
 		mf := &model.MediaFile{
@@ -122,21 +123,41 @@ func (h *OCRHandler) Upload(c *gin.Context) {
 	var merchantID uint64 = 0
 	var merchantName string = ""
 	if result.Merchant != "" {
-		m, err := h.merchantSvc.GetOrCreateByName(c.Request.Context(), tenantID, result.Merchant)
-		if err == nil && m != nil {
+		m, merr := h.merchantSvc.GetOrCreateByName(c.Request.Context(), tenantID, result.Merchant)
+		if merr == nil && m != nil {
 			merchantID = m.ID
 			merchantName = m.Name
 		}
 	}
 
-	c.JSON(http.StatusOK, dto.OK(gin.H{
-		"image_path":    "/" + savedPath,
-		"ai_mode":       result.AIMode,
-		"amount":        result.Amount,
-		"date":          result.Date,
-		"merchant_id":   merchantID,
-		"merchant_name": merchantName,
-		"raw_texts":     extractRawTextStrings(result.RawTexts),
+	rawTexts := extractRawTextStrings(result.RawTexts)
+
+	// 写入 ocr_records，供后续 LLM 分析使用
+	rawTextsJSON, _ := json.Marshal(rawTexts)
+	ocrRec := &model.OcrRecord{
+		TenantID:     tenantID,
+		ImagePath:    savedPath,
+		ImageHash:    originalHash,
+		ImageSize:    header.Size,
+		AIMode:       result.AIMode,
+		Amount:       result.Amount,
+		Date:         result.Date,
+		MerchantName: merchantName,
+		RawTexts:     string(rawTextsJSON),
+	}
+	if err := h.ocrRecordRepo.Create(c.Request.Context(), ocrRec); err != nil {
+		log.Printf("[OCR] tenant=%d failed to create ocr_record: %v", tenantID, err)
+	}
+
+	c.JSON(http.StatusOK, dto.OK(dto.OCRResponse{
+		OcrID:        ocrRec.ID,
+		ImagePath:    "/" + savedPath,
+		AIMode:       result.AIMode,
+		Amount:       result.Amount,
+		Date:         result.Date,
+		MerchantID:   merchantID,
+		MerchantName: merchantName,
+		RawTexts:     rawTexts,
 	}))
 }
 
@@ -241,11 +262,16 @@ func (h *OCRHandler) Analyze(c *gin.Context) {
 		}
 	}
 
+	// === OCR 识别 ===
+	ocrStartTime := time.Now()
 	ocrResult, err := h.ocrSvc.ProcessImage(c.Request.Context(), savedPath)
+	ocrDuration := time.Since(ocrStartTime)
 	if err != nil {
+		log.Printf("[OCR] tenant=%d 耗时=%.2fs 失败: %v", tenantID, ocrDuration.Seconds(), err)
 		c.JSON(http.StatusInternalServerError, dto.Fail(500, "OCR识别失败: "+err.Error()))
 		return
 	}
+	log.Printf("[OCR] tenant=%d 耗时=%.2fs 成功", tenantID, ocrDuration.Seconds())
 
 	var merchantID uint64
 	var merchantName string
@@ -275,14 +301,19 @@ func (h *OCRHandler) Analyze(c *gin.Context) {
 
 	rawTexts := extractRawTextStrings(ocrResult.RawTexts)
 
+	// === LLM 分析 ===
+	llmStartTime := time.Now()
 	// LLM 分析（非致命，失败时记录错误继续返回 OCR 结果）
 	var llmSuggestions []*dto.LLMSuggestion
 	var llmErrMsg string
 	if suggestions, lerr := h.llmSvc.Analyze(c.Request.Context(), tenantID, savedPath, rawTexts, categoryItems); lerr != nil {
-		log.Printf("[LLM] tenant=%d analyze error: %v", tenantID, lerr)
+		llmDuration := time.Since(llmStartTime)
+		log.Printf("[LLM] tenant=%d 耗时=%.2fs 失败: %v", tenantID, llmDuration.Seconds(), lerr)
 		llmErrMsg = friendlyLLMError(lerr)
 	} else {
+		llmDuration := time.Since(llmStartTime)
 		llmSuggestions = suggestions
+		log.Printf("[LLM] tenant=%d 耗时=%.2fs 成功，建议数=%d", tenantID, llmDuration.Seconds(), len(suggestions))
 		for i, s := range suggestions {
 			log.Printf("[LLM] tenant=%d suggestion[%d]: type=%s amount=%.2f category_id=%d category_hint=%s merchant=%s date=%s",
 				tenantID, i, s.Type, s.Amount, s.CategoryID, s.CategoryHint, s.MerchantName, s.Date)
@@ -311,39 +342,4 @@ func extractRawTextStrings(texts []dto.OCRText) []string {
 		result = append(result, t.Text)
 	}
 	return result
-}
-
-// friendlyLLMError 将 LLM 技术性错误转换为用户友好的中文提示
-func friendlyLLMError(err error) string {
-	msg := err.Error()
-	
-	// 检测视觉模式不支持的情况
-	if contains(msg, "unknown variant") || contains(msg, "image_url") || contains(msg, "binary") {
-		return "当前模型不支持图片视觉识别，请在设置-AI设置-识别模式改为文字模式（将 OCR 文本发给 AI）或更换为支持视觉的模型"
-	}
-	
-	// 检测 API 调用失败
-	if contains(msg, "400") || contains(msg, "401") || contains(msg, "403") {
-		return "LLM API 调用失败，请检查 API Key 和模型配置是否正确"
-	}
-	
-	if contains(msg, "timeout") || contains(msg, "超时") {
-		return "LLM 分析超时，请稍后重试"
-	}
-	
-	// 默认提示
-	return "AI 分析失败：" + msg
-}
-
-func contains(s, substr string) bool {
-	return len(s) >= len(substr) && indexOf(s, substr) >= 0
-}
-
-func indexOf(s, substr string) int {
-	for i := 0; i <= len(s)-len(substr); i++ {
-		if s[i:i+len(substr)] == substr {
-			return i
-		}
-	}
-	return -1
 }

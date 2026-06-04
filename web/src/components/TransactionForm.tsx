@@ -1,11 +1,12 @@
 import { useState, useEffect, useRef, useCallback } from 'react'
 import dayjs from 'dayjs'
 import {
-  categoryApi, merchantApi, transactionApi, uploadApi, llmApi,
+  categoryApi, merchantApi, transactionApi, uploadApi, llmApi, tenantApi,
   type Category, type Merchant, type Transaction, type TransactionCreatePayload, type OcrAnalyzeResult, type OcrResult, type LLMSuggestion,
 } from '../services/api'
+import { useTenantStore } from '../store/tenant'
 import { useResponsive } from '../hooks/useResponsive'
-import { toWebP, fileSHA256, getImageEngineStatus } from '../utils/imageUtils'
+import { toWebP, fileSHA256 } from '../utils/imageUtils'
 
 // ── 类型定义 ────────────────────────────────────────────────
 interface SlotForm {
@@ -18,7 +19,7 @@ interface SlotForm {
   note: string
 }
 
-type SlotStatus = 'pending' | 'recognizing' | 'done' | 'error'
+type SlotStatus = 'pending' | 'ocr_recognizing' | 'llm_recognizing' | 'done' | 'error'
 
 interface ImageSlot {
   id: string
@@ -26,6 +27,7 @@ interface ImageSlot {
   previewUrl: string
   status: SlotStatus
   ocrResult: OcrAnalyzeResult | null
+  ocrId: number          // ocr_records.id，识别后填入，LLM 阶段使用
   imagePath: string
   saved: boolean
   form: SlotForm
@@ -87,8 +89,10 @@ function newSlotId() { return `slot_${Date.now()}_${_slotIdCounter++}` }
 // ── 组件 ────────────────────────────────────────────────────
 export default function TransactionForm({ open, onClose, onSuccess, initialData, mode = 'create' }: Props) {
   const { isMobile } = useResponsive()
+  const { currentTenantId } = useTenantStore()
   const isDetailMode = mode === 'detail'
   const fileInputRef = useRef<HTMLInputElement>(null)
+  const [requireExpenseImage, setRequireExpenseImage] = useState(true)
 
   const [slots, setSlots] = useState<ImageSlot[]>([])
   const [activeIdx, setActiveIdx] = useState(0)
@@ -181,6 +185,15 @@ export default function TransactionForm({ open, onClose, onSuccess, initialData,
       llmEnabledRef.current = false
     })
 
+    // 加载租户设置（图片是否必填）
+    if (currentTenantId) {
+      tenantApi.getSettings(currentTenantId).then(r => {
+        setRequireExpenseImage(r.data.data?.require_expense_image ?? true)
+      }).catch(() => {
+        setRequireExpenseImage(true) // 失败时保守：默认必填
+      })
+    }
+
     if (initialData) {
       const raw = initialData.transaction_date ?? ''
       const date = raw.length >= 16 ? raw.slice(0, 16).replace(' ', 'T') : raw.slice(0, 10) + 'T00:00'
@@ -192,6 +205,7 @@ export default function TransactionForm({ open, onClose, onSuccess, initialData,
         try {
           const rawTexts = JSON.parse(firstImage.ocr_raw_texts) as string[]
           restoredOCR = {
+            ocr_id: 0,
             image_path: imagePath,
             ai_mode: false,
             amount: firstImage.ocr_amount ?? 0,
@@ -208,6 +222,7 @@ export default function TransactionForm({ open, onClose, onSuccess, initialData,
         previewUrl: imagePath,
         status: 'done',
         ocrResult: restoredOCR,
+        ocrId: 0,
         imagePath: imagePath,
         saved: false,
         form: {
@@ -252,102 +267,38 @@ export default function TransactionForm({ open, onClose, onSuccess, initialData,
     catch { /* ignore */ }
   }
 
-  // ── OCR 队列处理器 ────────────────────────────────────────
+  // ── OCR 队列处理器（分两阶段：OCR → LLM）────────────────────
   const processQueue = useCallback(async () => {
     if (processingRef.current) return
     processingRef.current = true
     while (ocrQueueRef.current.length > 0) {
       const id = ocrQueueRef.current[0]
-      // 标记为识别中
-      setSlots(prev => prev.map(s => s.id === id ? { ...s, status: 'recognizing' as SlotStatus } : s))
+
+      // ── 阶段一：OCR 识别 ──────────────────────────────────
+      setSlots(prev => prev.map(s => s.id === id ? { ...s, status: 'ocr_recognizing' as SlotStatus } : s))
       const file = filesMapRef.current.get(id) ?? null
       if (!file || file.size === 0) {
         ocrQueueRef.current = ocrQueueRef.current.slice(1)
         continue
       }
+
+      let ocrId = 0
+      let ocr: OcrAnalyzeResult | null = null
+
       try {
-        let ocr: OcrAnalyzeResult | null = null
         const slot = slots.find(s => s.id === id)
-        const originalHash = slot?.originalHash
-        if (llmEnabledRef.current) {
-          const res = await uploadApi.ocrAnalyze(file!, originalHash)
-          ocr = res.data.data
-        } else {
-          const res = await uploadApi.ocr(file!, originalHash)
-          const raw = res.data.data as OcrResult
-          // 将 OcrResult 包装成 OcrAnalyzeResult 兼容后续处理
-          ocr = {
-            image_path: raw.image_path,
-            ai_mode: raw.ai_mode,
-            amount: raw.amount,
-            date: raw.date,
-            merchant_id: raw.merchant_id,
-            merchant_name: raw.merchant_name ?? '',
-            raw_texts: raw.raw_texts,
-          }
-        }
-        setSlots(prev => prev.map(s => {
-          if (s.id !== id) return s
-          const form = { ...s.form }
-          if (ocr?.ai_mode) {
-            if ((ocr.amount ?? 0) > 0) form.amount = String(ocr.amount)
-            if (ocr.date) {
-              const datePart = ocr.date.match(/(\d{4}-\d{2}-\d{2})/)?.[1] ?? ocr.date.slice(0, 10)
-              form.date = `${datePart}T${extractTimeFromOcrDate(ocr.date)}`
-            }
-            if (ocr.merchant_id) {
-              form.merchantId = ocr.merchant_id
-              form.merchantName = ocr.merchant_name ?? ''
-            }
-          }
-          return { ...s, status: 'done' as SlotStatus, ocrResult: ocr ?? null, imagePath: ocr?.image_path ?? '', form }
-        }))
-        // 多条 LLM 建议 → 自动批量生成草稿
-        if (ocr?.llm && ocr.llm.length > 1) {
-          // 从 OCR 日期中提取时间（如有）
-          const ocrTime = extractTimeFromOcrDate(ocr.date)
-          setDrafts(prev => {
-            const next = new Map(prev)
-            const autoDrafts: SlotDraft[] = ocr.llm!.map((llm, idx) => {
-              const catId = llm.category_id ?? 0
-              const catName = catId
-                ? (categories.find(c => c.id === catId)?.name ?? llm.category_hint ?? '')
-                : (llm.category_hint ?? '')
-              
-              // 检查 LLM 返回的 date 是否已包含时间
-              let formattedDate: string
-              if (llm.date) {
-                const hasTime = /\d{2}:\d{2}$/.test(llm.date.trim())
-                if (hasTime) {
-                  // "YYYY-MM-DD HH:mm" → "YYYY-MM-DDTHH:mm"
-                  const parts = llm.date.trim().split(' ')
-                  formattedDate = `${parts[0]}T${parts[1] || '00:00'}`
-                } else {
-                  formattedDate = `${llm.date}T${ocrTime}`
-                }
-              } else {
-                formattedDate = dayjs().format('YYYY-MM-DDTHH:mm')
-              }
-              
-              return {
-                id: `draft_${Date.now()}_${idx}`,
-                type: llm.type === 'income' ? 'income' as const : 'expense' as const,
-                amount: llm.amount ?? 0,
-                categoryId: catId,
-                categoryName: catName,
-                merchantId: 0,
-                merchantName: llm.merchant_name ?? '',
-                date: formattedDate,
-                note: llm.note ?? '',
-                imagePath: ocr.image_path ?? '',
-                llmIndex: idx,
-              }
-            })
-            next.set(id, autoDrafts)
-            return next
-          })
-          setToast({ text: `AI 识别出 ${ocr.llm.length} 笔，已生成草稿，请确认后提交` })
-          setTimeout(() => setToast(null), 4000)
+        const res = await uploadApi.ocr(file, slot?.originalHash)
+        const raw = res.data.data as OcrResult
+        ocrId = raw.ocr_id ?? 0
+        ocr = {
+          ocr_id: raw.ocr_id,
+          image_path: raw.image_path,
+          ai_mode: raw.ai_mode,
+          amount: raw.amount,
+          date: raw.date,
+          merchant_id: raw.merchant_id,
+          merchant_name: raw.merchant_name ?? '',
+          raw_texts: raw.raw_texts,
         }
       } catch (err: unknown) {
         const axErr = err as { response?: { status?: number; data?: { message?: string } } }
@@ -357,22 +308,173 @@ export default function TransactionForm({ open, onClose, onSuccess, initialData,
           setTimeout(() => setToast(null), 3500)
         }
         setSlots(prev => prev.map(s => s.id === id ? { ...s, status: 'error' as SlotStatus } : s))
+        filesMapRef.current.delete(id)
+        ocrQueueRef.current = ocrQueueRef.current.slice(1)
+        continue
       }
+
+      // OCR 成功：更新表单预填
+      setSlots(prev => prev.map(s => {
+        if (s.id !== id) return s
+        const form = { ...s.form }
+        if (ocr?.ai_mode) {
+          if ((ocr.amount ?? 0) > 0) form.amount = String(ocr.amount)
+          if (ocr.date) {
+            const datePart = ocr.date.match(/(\d{4}-\d{2}-\d{2})/)?.[1] ?? ocr.date.slice(0, 10)
+            form.date = `${datePart}T${extractTimeFromOcrDate(ocr.date)}`
+          }
+          if (ocr.merchant_id) {
+            form.merchantId = ocr.merchant_id
+            form.merchantName = ocr.merchant_name ?? ''
+          }
+        }
+        // 只有 LLM 启用且有有效 ocr_id 才进入 llm_recognizing，否则直接 done
+        const nextStatus = (llmEnabledRef.current && ocrId > 0) ? 'llm_recognizing' : 'done'
+        return { ...s, status: nextStatus as SlotStatus, ocrResult: ocr ?? null, ocrId, imagePath: ocr?.image_path ?? '', form }
+      }))
+
+      // ── 阶段二：LLM 分析（仅当 LLM 启用且有 ocr_id）─────────
+      if (llmEnabledRef.current && ocrId > 0) {
+        try {
+          const llmRes = await llmApi.analyzeByOcrId({ ocr_id: ocrId })
+          const suggestions = llmRes.data.data?.suggestions ?? []
+          const llmErr = llmRes.data.data?.error
+
+          setSlots(prev => prev.map(s => {
+            if (s.id !== id) return s
+            const merged: OcrAnalyzeResult = { ...(s.ocrResult ?? ocr!), llm: suggestions as any, llm_error: llmErr }
+            return { ...s, status: 'done' as SlotStatus, ocrResult: merged }
+          }))
+
+          if (suggestions.length > 1) {
+            const ocrTime = extractTimeFromOcrDate(ocr?.date)
+            setDrafts(prev => {
+              const next = new Map(prev)
+              const autoDrafts: SlotDraft[] = suggestions.map((llm, idx) => {
+                const catId = llm.category_id ?? 0
+                const catName = catId
+                  ? (categories.find(c => c.id === catId)?.name ?? llm.category_hint ?? '')
+                  : (llm.category_hint ?? '')
+                let formattedDate: string
+                if (llm.date) {
+                  const hasTime = /\d{2}:\d{2}$/.test(llm.date.trim())
+                  if (hasTime) {
+                    const parts = llm.date.trim().split(' ')
+                    formattedDate = `${parts[0]}T${parts[1] || '00:00'}`
+                  } else {
+                    formattedDate = `${llm.date}T${ocrTime}`
+                  }
+                } else {
+                  formattedDate = dayjs().format('YYYY-MM-DDTHH:mm')
+                }
+                return {
+                  id: `draft_${Date.now()}_${idx}`,
+                  type: llm.type === 'income' ? 'income' as const : 'expense' as const,
+                  amount: llm.amount ?? 0,
+                  categoryId: catId,
+                  categoryName: catName,
+                  merchantId: 0,
+                  merchantName: llm.merchant_name ?? '',
+                  date: formattedDate,
+                  note: llm.note ?? '',
+                  imagePath: ocr?.image_path ?? '',
+                  llmIndex: idx,
+                }
+              })
+              next.set(id, autoDrafts)
+              return next
+            })
+            setToast({ text: `AI 识别出 ${suggestions.length} 笔，已生成草稿，请确认后提交` })
+            setTimeout(() => setToast(null), 4000)
+          }
+        } catch (err: unknown) {
+          const errMsg = err instanceof Error ? err.message : 'AI 分析失败'
+          setSlots(prev => prev.map(s => {
+            if (s.id !== id) return s
+            const merged: OcrAnalyzeResult = { ...(s.ocrResult ?? ocr!), llm_error: errMsg }
+            return { ...s, status: 'done' as SlotStatus, ocrResult: merged }
+          }))
+          setToast({ text: `AI 分析失败：${errMsg}`, error: true })
+          setTimeout(() => setToast(null), 4000)
+        }
+      } else {
+        setSlots(prev => prev.map(s => s.id === id ? { ...s, status: 'done' as SlotStatus } : s))
+      }
+
       filesMapRef.current.delete(id)
       ocrQueueRef.current = ocrQueueRef.current.slice(1)
     }
     processingRef.current = false
   }, [])
 
+  // ── LLM 重试（OCR 已完成，只重跑 AI 分析）────────────────────
+  const retryLlm = useCallback(async (slot: ImageSlot) => {
+    if (!slot.ocrId || slot.status !== 'done') return
+    const id = slot.id
+    setSlots(prev => prev.map(s => s.id === id ? { ...s, status: 'llm_recognizing' as SlotStatus } : s))
+    try {
+      const llmRes = await llmApi.analyzeByOcrId({ ocr_id: slot.ocrId })
+      const suggestions = llmRes.data.data?.suggestions ?? []
+      const llmErr = llmRes.data.data?.error
+      setSlots(prev => prev.map(s => {
+        if (s.id !== id) return s
+        const merged: OcrAnalyzeResult = { ...(s.ocrResult!), llm: suggestions as any, llm_error: llmErr }
+        return { ...s, status: 'done' as SlotStatus, ocrResult: merged }
+      }))
+      if (suggestions.length > 1) {
+        const ocrTime = extractTimeFromOcrDate(slot.ocrResult?.date)
+        setDrafts(prev => {
+          const next = new Map(prev)
+          const autoDrafts: SlotDraft[] = suggestions.map((llm, idx) => {
+            const catId = llm.category_id ?? 0
+            const catName = catId
+              ? (categories.find(c => c.id === catId)?.name ?? llm.category_hint ?? '')
+              : (llm.category_hint ?? '')
+            let formattedDate: string
+            if (llm.date) {
+              const hasTime = /\d{2}:\d{2}$/.test(llm.date.trim())
+              formattedDate = hasTime
+                ? `${llm.date.trim().split(' ')[0]}T${llm.date.trim().split(' ')[1] || '00:00'}`
+                : `${llm.date}T${ocrTime}`
+            } else {
+              formattedDate = dayjs().format('YYYY-MM-DDTHH:mm')
+            }
+            return {
+              id: `draft_${Date.now()}_${idx}`,
+              type: llm.type === 'income' ? 'income' as const : 'expense' as const,
+              amount: llm.amount ?? 0,
+              categoryId: catId,
+              categoryName: catName,
+              merchantId: 0,
+              merchantName: llm.merchant_name ?? '',
+              date: formattedDate,
+              note: llm.note ?? '',
+              imagePath: slot.ocrResult?.image_path ?? '',
+              llmIndex: idx,
+            }
+          })
+          next.set(id, autoDrafts)
+          return next
+        })
+        setToast({ text: `AI 识别出 ${suggestions.length} 笔，已生成草稿，请确认后提交` })
+        setTimeout(() => setToast(null), 4000)
+      }
+    } catch (err: unknown) {
+      const errMsg = err instanceof Error ? err.message : 'AI 分析失败'
+      setSlots(prev => prev.map(s => {
+        if (s.id !== id) return s
+        const merged: OcrAnalyzeResult = { ...(s.ocrResult!), llm_error: errMsg }
+        return { ...s, status: 'done' as SlotStatus, ocrResult: merged }
+      }))
+      setToast({ text: `AI 分析失败：${errMsg}`, error: true })
+      setTimeout(() => setToast(null), 4000)
+    }
+  }, [categories]) // eslint-disable-line react-hooks/exhaustive-deps
+
   // ── 文件选择 ──────────────────────────────────────────────
 
   /** 逐张转换，如果超限则弹窗确认后降低质量重试 */
   async function convertFilesWithConfirm(imageFiles: File[]): Promise<File[]> {
-    const engineStatus = getImageEngineStatus()
-    if (engineStatus === 'unavailable') {
-      throw new Error('图片转换不可用：WebAssembly 加载失败')
-    }
-
     const results: File[] = []
     for (const file of imageFiles) {
       let quality = 0.85
@@ -410,6 +512,7 @@ export default function TransactionForm({ open, onClose, onSuccess, initialData,
       previewUrl: URL.createObjectURL(f),
       status: 'pending' as SlotStatus,
       ocrResult: null,
+      ocrId: 0,
       imagePath: '',
       saved: false,
       form: defaultForm(),
@@ -444,7 +547,7 @@ export default function TransactionForm({ open, onClose, onSuccess, initialData,
     }
     const newSlots: ImageSlot[] = webpFiles.map((f, i) => ({
       id: newSlotId(), file: f, previewUrl: URL.createObjectURL(f),
-      status: 'pending' as SlotStatus, ocrResult: null, imagePath: '', saved: false, form: defaultForm(),
+      status: 'pending' as SlotStatus, ocrResult: null, ocrId: 0, imagePath: '', saved: false, form: defaultForm(),
       originalHash: hashes[i],
     }))
     newSlots.forEach(s => filesMapRef.current.set(s.id, s.file))
@@ -455,6 +558,42 @@ export default function TransactionForm({ open, onClose, onSuccess, initialData,
     newSlots.forEach(s => ocrQueueRef.current.push(s.id))
     processQueue()
   }
+
+  // ── 粘贴板图片 ────────────────────────────────────────────
+  const handlePaste = useCallback(async (e: ClipboardEvent) => {
+    const items = Array.from(e.clipboardData?.items ?? [])
+    const imageItems = items.filter(it => it.kind === 'file' && it.type.startsWith('image/'))
+    if (imageItems.length === 0) return
+    const imageFiles = imageItems.map(it => it.getAsFile()).filter((f): f is File => f !== null)
+    if (imageFiles.length === 0) return
+
+    const hashes = await Promise.all(imageFiles.map(f => fileSHA256(f)))
+    let webpFiles: File[]
+    try {
+      webpFiles = await convertFilesWithConfirm(imageFiles)
+    } catch (err: unknown) {
+      alert(err instanceof Error ? err.message : '转换失败')
+      return
+    }
+    const newSlots: ImageSlot[] = webpFiles.map((f, i) => ({
+      id: newSlotId(), file: f, previewUrl: URL.createObjectURL(f),
+      status: 'pending' as SlotStatus, ocrResult: null, ocrId: 0, imagePath: '', saved: false, form: defaultForm(),
+      originalHash: hashes[i],
+    }))
+    newSlots.forEach(s => filesMapRef.current.set(s.id, s.file))
+    setSlots(prev => {
+      setActiveIdx(prev.length)
+      return [...prev, ...newSlots]
+    })
+    newSlots.forEach(s => ocrQueueRef.current.push(s.id))
+    processQueue()
+  }, [processQueue])
+
+  useEffect(() => {
+    if (!open || isDetailMode) return
+    document.addEventListener('paste', handlePaste)
+    return () => document.removeEventListener('paste', handlePaste)
+  }, [open, isDetailMode, handlePaste])
 
   // ── 表单更新（绑定到当前 slot）────────────────────────────
   function patchForm(patch: Partial<SlotForm>) {
@@ -551,11 +690,11 @@ export default function TransactionForm({ open, onClose, onSuccess, initialData,
   async function handleSave(e: React.FormEvent) {
     e.preventDefault()
     if (!activeSlot) return
-    if (activeSlot.status === 'recognizing') { alert('正在识别，请稍候'); return }
+    if (isRecognizing) { alert('正在识别，请稍候'); return }
     const { form, imagePath } = activeSlot
     if (!form.amount || Number(form.amount) <= 0) { alert('请输入有效金额'); return }
     if (form.categoryId === '') { alert('请选择分类'); return }
-    if (form.type === 'expense' && !imagePath) { alert('支出记录需要上传截图'); return }
+    if (requireExpenseImage && form.type === 'expense' && !imagePath) { alert('支出记录需要上传截图'); return }
 
     setSaving(true)
     const ocr = activeSlot?.ocrResult
@@ -585,10 +724,9 @@ export default function TransactionForm({ open, onClose, onSuccess, initialData,
 
   // ── 新增模式：记一笔（本地暂存）─────────────────────────────
   function handleAddDraft() {
-    if (!activeSlot && form.type === 'expense') { alert('支出记录需要上传截图'); return }
     if (!form.amount || Number(form.amount) <= 0) { alert('请输入有效金额'); return }
     if (form.categoryId === '') { alert('请选择分类'); return }
-    if (form.type === 'expense' && !activeSlot!.imagePath && !activeSlot!.previewUrl) { alert('支出记录需要上传截图'); return }
+    if (requireExpenseImage && form.type === 'expense' && !activeSlot?.imagePath && !activeSlot?.previewUrl) { alert('支出记录需要上传截图'); return }
 
     const cat = categories.find(c => c.id === form.categoryId)
     const draft: SlotDraft = {
@@ -618,15 +756,15 @@ export default function TransactionForm({ open, onClose, onSuccess, initialData,
   }
 
   // ── 新增模式：批量保存当前 slot 的所有草稿（带防抖）──────────
-  async function handleBatchSave() {
+  async function handleBatchSave(overrideDrafts?: SlotDraft[]) {
     // 防抖：如果正在提交中，直接返回
     if (submittingRef.current) return
-    if (currentDrafts.length === 0) return
-    
+    const draftsToSave = overrideDrafts ?? currentDrafts
+    if (draftsToSave.length === 0) return
+
     submittingRef.current = true
     setSaving(true)
     const ocr = activeSlot?.ocrResult ?? null
-    const draftsToSave = currentDrafts
     try {
       for (const draft of draftsToSave) {
         const payload: TransactionCreatePayload = {
@@ -677,15 +815,32 @@ export default function TransactionForm({ open, onClose, onSuccess, initialData,
 
   // ── 新增模式：点击完成 ─────────────────────────────────────
   function handleCompleteClick() {
-    if (currentDrafts.length === 0) return
-    if (isMobile) {
-      // 手机端：无论几笔都先弹底部核验抽屉
-      setShowReview(true)
-    } else if (activeSlot?.previewUrl && currentDrafts.length > 1) {
-      setShowReview(true)
-    } else {
-      handleBatchSave()
+    if (currentDrafts.length === 0) {
+      // 没有暂存草稿时，先对当前表单校验，再写入 state 进入确认流程
+      if (!form.amount || Number(form.amount) <= 0) { alert('请输入有效金额'); return }
+      if (form.categoryId === '') { alert('请选择分类'); return }
+      if (requireExpenseImage && form.type === 'expense' && !activeSlot?.imagePath && !activeSlot?.previewUrl) { alert('支出记录需要上传截图'); return }
+      const cat = categories.find(c => c.id === form.categoryId)
+      const inlineDraft: SlotDraft = {
+        id: `draft_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
+        type: form.type,
+        amount: Number(form.amount),
+        categoryId: form.categoryId as number,
+        categoryName: cat?.name ?? '',
+        merchantId: form.merchantId,
+        merchantName: form.merchantName,
+        date: form.date,
+        note: form.note,
+        imagePath: activeSlot?.imagePath || activeSlot?.ocrResult?.image_path || '',
+      }
+      if (activeSlot) {
+        setDrafts(prev => { const next = new Map(prev); next.set(activeSlot.id, [inlineDraft]); return next })
+      } else {
+        setNoSlotDrafts([inlineDraft])
+      }
     }
+    // PC 和手机端统一走确认弹窗
+    setShowReview(true)
   }
 
   // ── 移除草稿（手机抽屉和 PC 草稿列均使用）────────────────────
@@ -826,7 +981,9 @@ export default function TransactionForm({ open, onClose, onSuccess, initialData,
 
   const form = activeSlot?.form ?? noSlotForm
   const ocrResult = activeSlot?.ocrResult ?? null
-  const isRecognizing = activeSlot?.status === 'recognizing'
+  const isOcrRecognizing = activeSlot?.status === 'ocr_recognizing'
+  const isLlmRecognizing = activeSlot?.status === 'llm_recognizing'
+  const isRecognizing = isOcrRecognizing || isLlmRecognizing
   const filteredCats = categories.filter(c => c.type === form.type)
   const isEditMode = !!initialData
   // 统一列表在 OCR 栏内，不再需要独立的草稿列
@@ -846,8 +1003,8 @@ export default function TransactionForm({ open, onClose, onSuccess, initialData,
           }`}
         >
           <img src={slot.previewUrl} alt="" className="w-full h-full object-cover" />
-          {/* 识别中 */}
-          {slot.status === 'recognizing' && (
+          {/* 识别中（OCR 或 LLM 阶段） */}
+          {(slot.status === 'ocr_recognizing' || slot.status === 'llm_recognizing') && (
             <div className="absolute inset-0 bg-black/50 flex items-center justify-center">
               <div className="w-3 h-3 border-2 border-white border-t-transparent rounded-full animate-spin" />
             </div>
@@ -858,10 +1015,40 @@ export default function TransactionForm({ open, onClose, onSuccess, initialData,
               <span className="text-white text-xs">⏳</span>
             </div>
           )}
-          {/* 识别失败 */}
+          {/* OCR 识别失败：重试整个识别 */}
           {slot.status === 'error' && (
-            <div className="absolute bottom-0 inset-x-0 bg-red-500/90 text-center py-0.5">
-              <span className="text-white text-xs">!</span>
+            <div
+              className="absolute inset-0 bg-black/40 flex items-center justify-center cursor-pointer"
+              onClick={(e) => {
+                e.stopPropagation()
+                setSlots(prev => prev.map(s => s.id === slot.id ? { ...s, status: 'pending' as SlotStatus } : s))
+                filesMapRef.current.set(slot.id, slot.file)
+                ocrQueueRef.current.push(slot.id)
+                processQueue()
+              }}
+            >
+              <div className="bg-white/90 rounded-full p-2 shadow-lg">
+                <svg className="w-5 h-5 text-red-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
+                </svg>
+              </div>
+            </div>
+          )}
+          {/* AI 分析失败：仅重试 LLM */}
+          {slot.status === 'done' && slot.ocrResult?.llm_error && !slot.ocrResult?.llm && (
+            <div
+              className="absolute inset-0 bg-orange-900/40 flex items-center justify-center cursor-pointer"
+              onClick={(e) => {
+                e.stopPropagation()
+                retryLlm(slot)
+              }}
+            >
+              <div className="bg-white/90 rounded-full p-2 shadow-lg flex flex-col items-center gap-0.5">
+                <svg className="w-4 h-4 text-orange-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
+                </svg>
+                <span className="text-orange-500 font-bold leading-none" style={{ fontSize: '9px' }}></span>
+              </div>
             </div>
           )}
           {/* 已保存 */}
@@ -918,7 +1105,7 @@ export default function TransactionForm({ open, onClose, onSuccess, initialData,
                   d="M3 9a2 2 0 012-2h.93a2 2 0 001.664-.89l.812-1.22A2 2 0 0110.07 4h3.86a2 2 0 011.664.89l.812 1.22A2 2 0 0018.07 7H19a2 2 0 012 2v9a2 2 0 01-2 2H5a2 2 0 01-2-2V9z" />
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M15 13a3 3 0 11-6 0 3 3 0 016 0z" />
               </svg>
-              <p className="text-xs text-gray-400 text-center px-2">点击或拖拽<br />支持多选</p>
+              <p className="text-xs text-gray-400 text-center px-2">点击、拖拽或粘贴<br />支持多选</p>
             </div>
           )
         ) : (
@@ -929,11 +1116,57 @@ export default function TransactionForm({ open, onClose, onSuccess, initialData,
               onClick={() => setLightboxOpen(true)}
               className="w-full h-full object-contain cursor-zoom-in"
             />
-            {isRecognizing && (
+            {isOcrRecognizing && (
               <div className="absolute inset-0 bg-black/40 flex flex-col items-center justify-center gap-2">
                 <div className="w-8 h-8 border-4 border-white border-t-transparent rounded-full animate-spin" />
-                <p className="text-white text-xs">识别中…</p>
+                <p className="text-white text-xs font-medium">OCR 识别中…</p>
               </div>
+            )}
+            {isLlmRecognizing && (
+              <div className="absolute inset-0 bg-black/40 flex flex-col items-center justify-center gap-2">
+                <div className="w-8 h-8 border-4 border-blue-300 border-t-transparent rounded-full animate-spin" />
+                <p className="text-white text-xs font-medium">AI 分析中…</p>
+              </div>
+            )}
+            {activeSlot.status === 'error' && !isDetailMode && (
+              <>
+                {/* 右上角红色 X：删除该图片 */}
+                <button
+                  type="button"
+                  onClick={e => {
+                    e.stopPropagation()
+                    setSlots(prev => {
+                      const next = prev.filter(s => s.id !== activeSlot.id)
+                      setActiveIdx(i => Math.min(i, next.length - 1))
+                      return next
+                    })
+                  }}
+                  className="absolute top-2 right-2 w-6 h-6 bg-red-500 hover:bg-red-600 rounded-full flex items-center justify-center shadow-lg transition-colors"
+                >
+                  <svg className="w-3.5 h-3.5 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M6 18L18 6M6 6l12 12" />
+                  </svg>
+                </button>
+                {/* 中心重试按钮 */}
+                <div className="absolute inset-0 bg-black/40 flex flex-col items-center justify-center gap-3">
+                  <button
+                    type="button"
+                    onClick={e => {
+                      e.stopPropagation()
+                      setSlots(prev => prev.map(s => s.id === activeSlot.id ? { ...s, status: 'pending' as SlotStatus } : s))
+                      filesMapRef.current.set(activeSlot.id, activeSlot.file)
+                      ocrQueueRef.current.push(activeSlot.id)
+                      processQueue()
+                    }}
+                    className="flex flex-col items-center gap-1.5 bg-white/90 hover:bg-white rounded-2xl px-5 py-3 shadow-xl transition-colors"
+                  >
+                    <svg className="w-6 h-6 text-gray-700" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
+                    </svg>
+                    <span className="text-xs font-medium text-gray-700">重试识别</span>
+                  </button>
+                </div>
+              </>
             )}
             {!isDetailMode && activeSlot.saved && (
               <div className="absolute top-2 left-2 bg-green-500 text-white text-xs px-2 py-0.5 rounded-full">
@@ -965,15 +1198,16 @@ export default function TransactionForm({ open, onClose, onSuccess, initialData,
           <div className="flex items-center gap-2">
             <span className="text-sm font-medium text-gray-700">识别结果</span>
             {ocrResult?.ai_mode && <span className="text-xs bg-green-100 text-green-600 px-1.5 py-0.5 rounded-full">AI</span>}
-            {isRecognizing && <span className="text-xs text-gray-400">识别中…</span>}
+            {isOcrRecognizing && <span className="text-xs text-gray-400">OCR 识别中…</span>}
+            {isLlmRecognizing && <span className="text-xs text-blue-400">AI 分析中…</span>}
           </div>
-          {isEditMode && activeSlot?.previewUrl && activeSlot?.status !== 'recognizing' && (
+          {isEditMode && activeSlot?.previewUrl && activeSlot?.status !== 'ocr_recognizing' && activeSlot?.status !== 'llm_recognizing' && (
             <button
               type="button"
               onClick={async () => {
                 const slot = slots[activeIdx]
                 if (!slot?.previewUrl) return
-                setSlots(prev => prev.map((s, i) => i === activeIdx ? { ...s, status: 'recognizing' } : s))
+                setSlots(prev => prev.map((s, i) => i === activeIdx ? { ...s, status: 'ocr_recognizing' as SlotStatus } : s))
                 try {
                   const blob = await fetch(slot.previewUrl).then(r => r.blob())
                   const file = new File([blob], 'reocr.jpg', { type: blob.type || 'image/jpeg' })
@@ -1012,12 +1246,17 @@ export default function TransactionForm({ open, onClose, onSuccess, initialData,
             </p>
           </div>
         )}
-        {isRecognizing && (
+        {isOcrRecognizing && (
           <div className="h-full flex items-center justify-center">
-            <p className="text-xs text-gray-400">识别中…</p>
+            <p className="text-xs text-gray-400">OCR 识别中…</p>
           </div>
         )}
-        {ocrResult && !isRecognizing && (
+        {isLlmRecognizing && (
+          <div className="h-full flex items-center justify-center">
+            <p className="text-xs text-blue-400">AI 分析中…</p>
+          </div>
+        )}
+        {ocrResult && !isOcrRecognizing && (
           <>
             {ocrResult.ai_mode && (
               <div className="mb-3 bg-green-50 rounded-xl p-3 space-y-1.5">
@@ -1456,7 +1695,7 @@ export default function TransactionForm({ open, onClose, onSuccess, initialData,
               <button
                 type="button"
                 onClick={handleAddDraft}
-                disabled={saving || isRecognizing || (form.type === 'expense' && !activeSlot)}
+                disabled={saving || isRecognizing || (requireExpenseImage && form.type === 'expense' && !activeSlot)}
                 className="flex-1 py-2.5 font-semibold rounded-xl transition-colors text-sm bg-white border border-blue-200 text-blue-600 hover:bg-blue-50 disabled:border-gray-200 disabled:text-gray-400"
               >
                 {isRecognizing ? '识别中…' : '记一笔'}
@@ -1697,10 +1936,10 @@ export default function TransactionForm({ open, onClose, onSuccess, initialData,
     </div>
   ) : null
 
-  // ── PC 确认弹窗（多笔提交前）────────────────────────────────
-  const ReviewModal = !isMobile && showReview && activeSlot ? (
+  // ── PC 确认弹窗（提交前核验）────────────────────────────────
+  const ReviewModal = !isMobile && showReview ? (
     <div className="fixed inset-0 bg-black/60 z-[70] flex items-center justify-center">
-      <div className="bg-white rounded-2xl shadow-2xl flex flex-col" style={{ width: '80vw', height: '80vh' }}>
+      <div className="bg-white rounded-2xl shadow-2xl flex flex-col" style={{ width: activeSlot?.previewUrl ? '80vw' : '480px', height: activeSlot?.previewUrl ? '80vh' : 'auto', maxHeight: '80vh' }}>
         <div className="flex items-center justify-between px-5 py-3 border-b border-gray-100 flex-shrink-0">
           <h3 className="text-base font-semibold text-gray-800">确认提交 {currentDrafts.length} 笔</h3>
           <button onClick={() => setShowReview(false)} className="p-1.5 rounded-full hover:bg-gray-100 text-gray-500">
@@ -1709,17 +1948,13 @@ export default function TransactionForm({ open, onClose, onSuccess, initialData,
             </svg>
           </button>
         </div>
-        <div className="flex flex-1 overflow-hidden">
+        <div className={activeSlot?.previewUrl ? 'flex flex-1 overflow-hidden' : 'overflow-y-auto'}>
+          {activeSlot?.previewUrl && (
           <div className="flex-1 min-w-0 border-r border-gray-100 bg-gray-50 overflow-hidden">
-            {activeSlot.previewUrl ? (
-              <img src={activeSlot.previewUrl} alt="凭证" onClick={() => setLightboxOpen(true)}
-                className="w-full h-full object-contain cursor-zoom-in" />
-            ) : (
-              <div className="w-full h-full flex items-center justify-center">
-                <p className="text-xs text-gray-300">无图片</p>
-              </div>
-            )}
+            <img src={activeSlot.previewUrl} alt="凭证" onClick={() => setLightboxOpen(true)}
+              className="w-full h-full object-contain cursor-zoom-in" />
           </div>
+          )}
           <div className="flex-shrink-0 overflow-y-auto p-4">
             <table className="text-sm border-collapse">
               <thead>
@@ -1788,15 +2023,30 @@ export default function TransactionForm({ open, onClose, onSuccess, initialData,
   const Lightbox = lightboxOpen && activeSlot?.previewUrl ? (
     <div className="fixed inset-0 bg-black/90 z-[80] flex items-center justify-center p-4"
       onClick={() => setLightboxOpen(false)}>
+      {/* 关闭按钮 */}
       <button onClick={() => setLightboxOpen(false)}
         className="absolute top-4 right-4 text-white bg-black/40 hover:bg-black/60 rounded-full p-2">
         <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
           <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
         </svg>
       </button>
+
+      {/* 图片 */}
       <img src={activeSlot.previewUrl} alt="凭证大图"
         onClick={e => e.stopPropagation()}
         className="max-w-full max-h-full object-contain rounded-lg" />
+
+      {/* 右下角图片信息弹窗 */}
+      <div className="absolute bottom-4 right-4 bg-black/60 text-white px-3 py-2 rounded-lg text-sm"
+        onClick={e => e.stopPropagation()}>
+        <div className="flex flex-col gap-1">
+          <span className="font-medium">{activeSlot.file.name}</span>
+          <span className="text-gray-300">
+            {activeSlot.file.type.split('/')[1]?.toUpperCase() || '未知'} ·
+            {(activeSlot.file.size / 1024).toFixed(1)} KB
+          </span>
+        </div>
+      </div>
     </div>
   ) : null
 

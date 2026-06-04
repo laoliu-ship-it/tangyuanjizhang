@@ -72,6 +72,13 @@ type TransactionRepo interface {
 	YearlyCategoryStats(ctx context.Context, tenantID uint64, year int) ([]*dto.CategoryStat, error)
 }
 
+// OcrRecordRepo OCR记录数据仓库接口
+type OcrRecordRepo interface {
+	Create(ctx context.Context, r *model.OcrRecord) error
+	// GetByID 同时校验 tenantID，防止跨租户访问
+	GetByID(ctx context.Context, id, tenantID uint64) (*model.OcrRecord, error)
+}
+
 // TenantLLMConfigRepo 租户 LLM 配置数据仓库接口
 type TenantLLMConfigRepo interface {
 	// GetByTenantID 获取租户配置，不存在时返回 nil, nil
@@ -105,6 +112,12 @@ type MediaFileRepo interface {
 	Create(ctx context.Context, mf *model.MediaFile) error
 }
 
+// TenantSettingsRepo 租户通用设置数据仓库接口
+type TenantSettingsRepo interface {
+	GetByTenantID(ctx context.Context, tenantID uint64) (*model.TenantSettings, error)
+	Save(ctx context.Context, s *model.TenantSettings) error
+}
+
 // PlatformAdminRepo 平台管理员数据仓库接口
 type PlatformAdminRepo interface {
 	Create(ctx context.Context, admin *model.PlatformAdmin) error
@@ -121,4 +134,11 @@ type PlatformStatsRepo interface {
 	CountTransactionsByUserID(ctx context.Context, userID uint64) (int64, error)
 	CountMediaByUserID(ctx context.Context, userID uint64) (int64, error)
 	CountTenantsByUserID(ctx context.Context, userID uint64) (int64, error)
+}
+
+// PlatformConfigRepo 平台配置数据仓库接口
+type PlatformConfigRepo interface {
+	GetByKey(ctx context.Context, key string) (*model.PlatformConfig, error)
+	GetAll(ctx context.Context) ([]*model.PlatformConfig, error)
+	Upsert(ctx context.Context, cfg *model.PlatformConfig) error
 }

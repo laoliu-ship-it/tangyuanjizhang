@@ -23,26 +23,32 @@ type PlatformAdminService interface {
 	GetDashboard(ctx context.Context) (*dto.PlatformDashboardResp, error)
 	ListUsers(ctx context.Context, filter dto.PlatformUserFilter) (*dto.PlatformUserListResp, error)
 	GetUserDetail(ctx context.Context, userID uint64) (*dto.PlatformUserDetailResp, error)
+	// 配置管理
+	GetAllConfigs(ctx context.Context) (*dto.PlatformConfigListResp, error)
+	UpdateConfig(ctx context.Context, key, value string) (*dto.PlatformConfigItem, error)
 }
 
 type platformAdminService struct {
-	adminRepo repo.PlatformAdminRepo
-	statsRepo repo.PlatformStatsRepo
-	userRepo  repo.UserRepo
-	cfg       *config.Config
+	adminRepo  repo.PlatformAdminRepo
+	statsRepo  repo.PlatformStatsRepo
+	userRepo   repo.UserRepo
+	configRepo repo.PlatformConfigRepo
+	cfg        *config.Config
 }
 
 func NewPlatformAdminService(
 	adminRepo repo.PlatformAdminRepo,
 	statsRepo repo.PlatformStatsRepo,
 	userRepo repo.UserRepo,
+	configRepo repo.PlatformConfigRepo,
 	cfg *config.Config,
 ) PlatformAdminService {
 	return &platformAdminService{
-		adminRepo: adminRepo,
-		statsRepo: statsRepo,
-		userRepo:  userRepo,
-		cfg:       cfg,
+		adminRepo:  adminRepo,
+		statsRepo:  statsRepo,
+		userRepo:   userRepo,
+		configRepo: configRepo,
+		cfg:        cfg,
 	}
 }
 
@@ -139,5 +145,45 @@ func (s *platformAdminService) GetUserDetail(ctx context.Context, userID uint64)
 		TenantCount:      tenantCount,
 		TransactionCount: txCount,
 		MediaCount:       mediaCount,
+	}, nil
+}
+
+func (s *platformAdminService) GetAllConfigs(ctx context.Context) (*dto.PlatformConfigListResp, error) {
+	configs, err := s.configRepo.GetAll(ctx)
+	if err != nil {
+		return nil, err
+	}
+
+	items := make([]*dto.PlatformConfigItem, 0, len(configs))
+	for _, c := range configs {
+		items = append(items, &dto.PlatformConfigItem{
+			Key:         c.ConfigKey,
+			Value:       c.ConfigValue,
+			Description: c.Description,
+			UpdatedAt:   c.UpdatedAt.Format("2006-01-02 15:04:05"),
+		})
+	}
+	return &dto.PlatformConfigListResp{Items: items}, nil
+}
+
+func (s *platformAdminService) UpdateConfig(ctx context.Context, key, value string) (*dto.PlatformConfigItem, error) {
+	cfg, err := s.configRepo.GetByKey(ctx, key)
+	if err != nil {
+		return nil, err
+	}
+	if cfg == nil {
+		return nil, errors.New("配置项不存在")
+	}
+
+	cfg.ConfigValue = value
+	if err := s.configRepo.Upsert(ctx, cfg); err != nil {
+		return nil, err
+	}
+
+	return &dto.PlatformConfigItem{
+		Key:         cfg.ConfigKey,
+		Value:       cfg.ConfigValue,
+		Description: cfg.Description,
+		UpdatedAt:   cfg.UpdatedAt.Format("2006-01-02 15:04:05"),
 	}, nil
 }

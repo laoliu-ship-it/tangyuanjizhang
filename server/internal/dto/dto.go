@@ -65,6 +65,14 @@ type UpdateMemberRoleReq struct {
 	Role string `json:"role" binding:"required,min=1,max=50"`
 }
 
+type TenantSettingsResp struct {
+	RequireExpenseImage bool `json:"require_expense_image"`
+}
+
+type UpdateTenantSettingsReq struct {
+	RequireExpenseImage bool `json:"require_expense_image"`
+}
+
 type TenantResp struct {
 	ID        uint64      `json:"id"`
 	Name      string      `json:"name"`
@@ -208,7 +216,21 @@ type OCRText struct {
 	Confidence float64 `json:"confidence"`
 }
 
-// OCRAnalyzeResponse OCR+LLM 分析接口的响应（/upload/ocr/analyze）
+// OCRResponse OCR识别接口响应（/upload/ocr），前端用 ocr_id 再请求 LLM
+type OCRResponse struct {
+	OcrID        uint64   `json:"ocr_id"`
+	ImagePath    string   `json:"image_path"`
+	AIMode       bool     `json:"ai_mode"`
+	Amount       float64  `json:"amount"`
+	Date         string   `json:"date"`
+	MerchantID   uint64   `json:"merchant_id"`
+	MerchantName string   `json:"merchant_name"`
+	RawTexts     []string `json:"raw_texts"`
+	Duplicate    bool     `json:"duplicate,omitempty"`
+	FileName     string   `json:"file_name,omitempty"`
+}
+
+// OCRAnalyzeResponse OCR+LLM 合并接口响应（/upload/ocr/analyze，不改动）
 type OCRAnalyzeResponse struct {
 	ImagePath    string           `json:"image_path"`
 	AIMode       bool             `json:"ai_mode"`
@@ -267,6 +289,17 @@ type SaveTenantLLMConfigReq struct {
 	APIKey      string `json:"api_key"` // 为空时保留原来的 key
 	Model       string `json:"model"`
 	Mode        string `json:"mode" binding:"omitempty,oneof=vision ocr_text"`
+}
+
+// LLMAnalyzeReq 单独调用 LLM 分析的请求（只接受 ocr_id，服务端从 ocr_records 取内容）
+type LLMAnalyzeReq struct {
+	OcrID uint64 `json:"ocr_id" binding:"required"`
+}
+
+// LLMAnalyzeResp 单独调用 LLM 分析的响应
+type LLMAnalyzeResp struct {
+	Suggestions []*LLMSuggestion `json:"suggestions"`
+	Error       string           `json:"error,omitempty"`
 }
 
 // ========== 统计 ==========
@@ -406,4 +439,21 @@ func (f *PlatformUserFilter) Normalize() {
 	if f.PageSize > 100 {
 		f.PageSize = 100
 	}
+}
+
+// ========== 平台配置 ==========
+
+type PlatformConfigItem struct {
+	Key         string `json:"key"`
+	Value       string `json:"value"`
+	Description string `json:"description"`
+	UpdatedAt   string `json:"updated_at"`
+}
+
+type PlatformConfigListResp struct {
+	Items []*PlatformConfigItem `json:"items"`
+}
+
+type PlatformConfigUpdateReq struct {
+	Value string `json:"value" binding:"required"`
 }

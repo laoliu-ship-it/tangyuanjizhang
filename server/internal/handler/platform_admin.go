@@ -87,3 +87,37 @@ func (h *PlatformAdminHandler) GetUserDetail(c *gin.Context) {
 	}
 	c.JSON(http.StatusOK, dto.OK(resp))
 }
+
+// GetConfigs 获取所有平台配置 GET /api/platform/configs
+func (h *PlatformAdminHandler) GetConfigs(c *gin.Context) {
+	resp, err := h.svc.GetAllConfigs(c.Request.Context())
+	if err != nil {
+		log.Printf("[platform] GetConfigs error: %v", err)
+		c.JSON(http.StatusInternalServerError, dto.Fail(500, "获取配置失败"))
+		return
+	}
+	c.JSON(http.StatusOK, dto.OK(resp))
+}
+
+// UpdateConfig 更新单个配置 PUT /api/platform/configs/:key
+func (h *PlatformAdminHandler) UpdateConfig(c *gin.Context) {
+	key := c.Param("key")
+	if key == "" {
+		c.JSON(http.StatusBadRequest, dto.Fail(400, "配置键不能为空"))
+		return
+	}
+
+	var req dto.PlatformConfigUpdateReq
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, dto.Fail(400, "参数错误: "+err.Error()))
+		return
+	}
+
+	resp, err := h.svc.UpdateConfig(c.Request.Context(), key, req.Value)
+	if err != nil {
+		log.Printf("[platform] UpdateConfig error: %v", err)
+		c.JSON(http.StatusInternalServerError, dto.Fail(500, "更新配置失败"))
+		return
+	}
+	c.JSON(http.StatusOK, dto.OK(resp))
+}

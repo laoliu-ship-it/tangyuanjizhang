@@ -170,6 +170,7 @@ export interface RangeStatistics {
 }
 
 export interface OcrResult {
+  ocr_id: number        // 服务端 ocr_records.id，供后续 LLM 调用
   image_path: string
   ai_mode: boolean
   amount: number       // ai_mode=false 时为 0
@@ -190,9 +191,29 @@ export interface LLMSuggestion {
   source_lines: number[]  // 对应 OCR 原始文字的行号（从 0 开始）
 }
 
+export interface LLMAnalyzeRequest {
+  image_path: string
+  raw_texts: string[]
+  categories: { id: number; name: string; type: string }[]
+}
+
+// 新流程：只传 ocr_id，服务端从 ocr_records 取内容再调 LLM
+export interface LLMAnalyzeByOcrIdRequest {
+  ocr_id: number
+}
+
+export interface LLMAnalyzeResponse {
+  suggestions: LLMSuggestion[]
+  error?: string
+}
+
 export interface OcrAnalyzeResult extends OcrResult {
   llm?: LLMSuggestion[]
   llm_error?: string
+}
+
+export interface TenantSettings {
+  require_expense_image: boolean
 }
 
 export interface TenantLLMConfig {
@@ -236,6 +257,10 @@ export const tenantApi = {
     api.put<ApiResponse<null>>(`/tenants/${id}/members/${userId}`, { role }),
   getMembers: (id: number) =>
     api.get<ApiResponse<TenantMember[]>>(`/tenants/${id}/members`),
+  getSettings: (id: number) =>
+    api.get<ApiResponse<TenantSettings>>(`/tenants/${id}/settings`),
+  updateSettings: (id: number, data: TenantSettings) =>
+    api.put<ApiResponse<TenantSettings>>(`/tenants/${id}/settings`, data),
 }
 
 // 分类
@@ -322,6 +347,10 @@ export const llmApi = {
     model?: string
     mode?: 'vision' | 'ocr_text'
   }) => api.put<ApiResponse<TenantLLMConfig>>('/llm/config', data),
+  analyze: (data: LLMAnalyzeRequest) =>
+    api.post<ApiResponse<LLMAnalyzeResponse>>('/llm/analyze', data),
+  analyzeByOcrId: (data: LLMAnalyzeByOcrIdRequest) =>
+    api.post<ApiResponse<LLMAnalyzeResponse>>('/llm/analyze', data),
 }
 
 // 导出

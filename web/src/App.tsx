@@ -16,6 +16,7 @@ import PlatformLogin from './platform/pages/Login'
 import PlatformDashboard from './platform/pages/Dashboard'
 import PlatformUsers from './platform/pages/Users'
 import PlatformUserDetail from './platform/pages/UserDetail'
+import PlatformSettings from './platform/pages/Settings'
 
 function RequireAuth({ children }: { children: React.ReactNode }) {
   const token = useAuthStore(s => s.token)
@@ -119,6 +120,7 @@ export default function App() {
           <Route index element={<PlatformDashboard />} />
           <Route path="users" element={<PlatformUsers />} />
           <Route path="users/:id" element={<PlatformUserDetail />} />
+          <Route path="settings" element={<PlatformSettings />} />
         </Route>
 
         <Route path="*" element={<Navigate to="/" replace />} />

@@ -26,6 +26,8 @@ type TenantService interface {
 	RemoveMember(ctx context.Context, tenantID, targetUserID uint64) error
 	UpdateMemberRole(ctx context.Context, tenantID, targetUserID uint64, role string) error
 	ListMembers(ctx context.Context, tenantID uint64) ([]*dto.MemberResp, error)
+	GetSettings(ctx context.Context, tenantID uint64) (*dto.TenantSettingsResp, error)
+	UpdateSettings(ctx context.Context, tenantID uint64, req dto.UpdateTenantSettingsReq) (*dto.TenantSettingsResp, error)
 }
 
 type tenantService struct {
@@ -33,6 +35,7 @@ type tenantService struct {
 	tenantMemberRepo repo.TenantMemberRepo
 	userRepo         repo.UserRepo
 	categoryRepo     repo.CategoryRepo
+	settingsRepo     repo.TenantSettingsRepo
 }
 
 func NewTenantService(
@@ -40,12 +43,14 @@ func NewTenantService(
 	tenantMemberRepo repo.TenantMemberRepo,
 	userRepo repo.UserRepo,
 	categoryRepo repo.CategoryRepo,
+	settingsRepo repo.TenantSettingsRepo,
 ) TenantService {
 	return &tenantService{
 		tenantRepo:       tenantRepo,
 		tenantMemberRepo: tenantMemberRepo,
 		userRepo:         userRepo,
 		categoryRepo:     categoryRepo,
+		settingsRepo:     settingsRepo,
 	}
 }
 
@@ -184,4 +189,31 @@ func (s *tenantService) ListMembers(ctx context.Context, tenantID uint64) ([]*dt
 		result = append(result, resp)
 	}
 	return result, nil
+}
+
+func (s *tenantService) GetSettings(ctx context.Context, tenantID uint64) (*dto.TenantSettingsResp, error) {
+	existing, err := s.settingsRepo.GetByTenantID(ctx, tenantID)
+	if err != nil {
+		return nil, err
+	}
+	if existing == nil {
+		// 默认值：支出必须上传图片
+		return &dto.TenantSettingsResp{RequireExpenseImage: true}, nil
+	}
+	return &dto.TenantSettingsResp{RequireExpenseImage: existing.RequireExpenseImage}, nil
+}
+
+func (s *tenantService) UpdateSettings(ctx context.Context, tenantID uint64, req dto.UpdateTenantSettingsReq) (*dto.TenantSettingsResp, error) {
+	existing, err := s.settingsRepo.GetByTenantID(ctx, tenantID)
+	if err != nil {
+		return nil, err
+	}
+	if existing == nil {
+		existing = &model.TenantSettings{TenantID: tenantID}
+	}
+	existing.RequireExpenseImage = req.RequireExpenseImage
+	if err := s.settingsRepo.Save(ctx, existing); err != nil {
+		return nil, err
+	}
+	return &dto.TenantSettingsResp{RequireExpenseImage: existing.RequireExpenseImage}, nil
 }

@@ -4,10 +4,11 @@ import (
 	"fmt"
 
 	"fandianjizhang/server/config"
+	"fandianjizhang/server/internal/repo"
 )
 
-// NewEngine 根据配置创建对应的 OCR 引擎（带内容哈希缓存）
-func NewEngine(cfg *config.Config) (Engine, error) {
+// NewEngine 根据配置创建对应的 OCR 引擎（带可配置缓存）
+func NewEngine(cfg *config.Config, configRepo repo.PlatformConfigRepo) (Engine, error) {
 	var inner Engine
 	switch cfg.OCR.Engine {
 	case "rapidocr", "":
@@ -20,5 +21,5 @@ func NewEngine(cfg *config.Config) (Engine, error) {
 	default:
 		return nil, fmt.Errorf("未知的 OCR 引擎类型: %s", cfg.OCR.Engine)
 	}
-	return NewCachedEngine(inner), nil
+	return NewCachedEngine(inner, configRepo), nil
 }

@@ -170,6 +170,35 @@ func (h *TenantHandler) UpdateMemberRole(c *gin.Context) {
 	c.JSON(http.StatusOK, dto.OK(nil))
 }
 
+// GetSettings 获取租户通用设置（所有成员可访问）
+// GET /api/tenants/:id/settings
+func (h *TenantHandler) GetSettings(c *gin.Context) {
+	tenantID := middleware.GetTenantID(c)
+	resp, err := h.tenantSvc.GetSettings(c.Request.Context(), tenantID)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, dto.Fail(500, "获取设置失败: "+err.Error()))
+		return
+	}
+	c.JSON(http.StatusOK, dto.OK(resp))
+}
+
+// UpdateSettings 更新租户通用设置（admin 权限）
+// PUT /api/tenants/:id/settings
+func (h *TenantHandler) UpdateSettings(c *gin.Context) {
+	tenantID := middleware.GetTenantID(c)
+	var req dto.UpdateTenantSettingsReq
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, dto.Fail(400, "参数错误: "+err.Error()))
+		return
+	}
+	resp, err := h.tenantSvc.UpdateSettings(c.Request.Context(), tenantID, req)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, dto.Fail(500, "更新设置失败: "+err.Error()))
+		return
+	}
+	c.JSON(http.StatusOK, dto.OK(resp))
+}
+
 // ListMembers 获取成员列表
 // GET /api/tenants/:id/members
 func (h *TenantHandler) ListMembers(c *gin.Context) {

@@ -622,6 +622,32 @@ func (r *tenantLLMConfigRepo) Save(ctx context.Context, cfg *model.TenantLLMConf
 	return r.db.WithContext(ctx).Save(cfg).Error
 }
 
+// ========== TenantSettingsRepo ==========
+
+type tenantSettingsRepo struct {
+	db *gorm.DB
+}
+
+func NewTenantSettingsRepo(db *gorm.DB) TenantSettingsRepo {
+	return &tenantSettingsRepo{db: db}
+}
+
+func (r *tenantSettingsRepo) GetByTenantID(ctx context.Context, tenantID uint64) (*model.TenantSettings, error) {
+	var s model.TenantSettings
+	err := r.db.WithContext(ctx).Where("tenant_id = ?", tenantID).First(&s).Error
+	if err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return nil, nil
+		}
+		return nil, err
+	}
+	return &s, nil
+}
+
+func (r *tenantSettingsRepo) Save(ctx context.Context, s *model.TenantSettings) error {
+	return r.db.WithContext(ctx).Save(s).Error
+}
+
 // ========== MediaFileRepo ==========
 
 type mediaFileRepo struct {
@@ -751,4 +777,79 @@ func (r *platformStatsRepo) CountTenantsByUserID(ctx context.Context, userID uin
 	var count int64
 	err := r.db.WithContext(ctx).Model(&model.TenantMember{}).Where("user_id = ?", userID).Count(&count).Error
 	return count, err
+}
+
+// ========== PlatformConfigRepo ==========
+
+type platformConfigRepo struct {
+	db *gorm.DB
+}
+
+func NewPlatformConfigRepo(db *gorm.DB) PlatformConfigRepo {
+	return &platformConfigRepo{db: db}
+}
+
+func (r *platformConfigRepo) GetByKey(ctx context.Context, key string) (*model.PlatformConfig, error) {
+	var cfg model.PlatformConfig
+	err := r.db.WithContext(ctx).Where("config_key = ?", key).First(&cfg).Error
+	if err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return nil, nil
+		}
+		return nil, err
+	}
+	return &cfg, nil
+}
+
+func (r *platformConfigRepo) GetAll(ctx context.Context) ([]*model.PlatformConfig, error) {
+	var configs []*model.PlatformConfig
+	err := r.db.WithContext(ctx).Order("config_key ASC").Find(&configs).Error
+	return configs, err
+}
+
+func (r *platformConfigRepo) Upsert(ctx context.Context, cfg *model.PlatformConfig) error {
+	cfg.UpdatedAt = time.Now()
+	return r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		var existing model.PlatformConfig
+		err := tx.Where("config_key = ?", cfg.ConfigKey).First(&existing).Error
+		if err != nil {
+			if errors.Is(err, gorm.ErrRecordNotFound) {
+				return tx.Create(cfg).Error
+			}
+			return err
+		}
+		return tx.Model(&existing).Updates(map[string]interface{}{
+			"config_value": cfg.ConfigValue,
+			"description":  cfg.Description,
+			"updated_at":   cfg.UpdatedAt,
+		}).Error
+	})
+}
+
+// ========== OcrRecordRepo ==========
+
+type ocrRecordRepo struct {
+	db *gorm.DB
+}
+
+func NewOcrRecordRepo(db *gorm.DB) OcrRecordRepo {
+	return &ocrRecordRepo{db: db}
+}
+
+func (r *ocrRecordRepo) Create(ctx context.Context, rec *model.OcrRecord) error {
+	return r.db.WithContext(ctx).Create(rec).Error
+}
+
+func (r *ocrRecordRepo) GetByID(ctx context.Context, id, tenantID uint64) (*model.OcrRecord, error) {
+	var rec model.OcrRecord
+	err := r.db.WithContext(ctx).
+		Where("id = ? AND tenant_id = ?", id, tenantID).
+		First(&rec).Error
+	if err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return nil, nil
+		}
+		return nil, err
+	}
+	return &rec, nil
 }
