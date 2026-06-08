@@ -23,6 +23,7 @@ cd web && npm run dev -- --port 5274
 - **日期查询必须包裹 DATE()**：`transaction_date` 是 DATETIME 类型，所有日期范围/精确匹配查询必须用 `DATE(transaction_date)`，否则时间部分导致匹配失败
 - **JoinedAt 必须显式赋值**：创建 `TenantMember` 时必须设置 `JoinedAt: time.Now()`，MySQL 5.7 严格模式拒绝零值 datetime
 - **默认分类在 default_categories.go 维护**：注册和创建租户均调用 `createDefaultCategories()`，不在各自 service 中各自维护列表
+- **分析类接口失败必须用 `dto.Fail`**：LLM/OCR 等异步分析接口出错，不能用 `dto.OK` 包裹 `error` 字段返回 `code: 0`，必须用 `dto.Fail(code, message)` 让前端 axios 拦截器能正确捕获
 
 ### React 前端
 
@@ -31,6 +32,7 @@ cd web && npm run dev -- --port 5274
 - **datetime-local 格式转换**：前端使用 `YYYY-MM-DDTHH:mm` 格式，提交时转为 `YYYY-MM-DD HH:mm:00`（replace T + 拼接秒）
 - **图片 URL 构造**：后端存储的 `image_path` 以 `/uploads/` 开头，前端访问时加 `/api` 前缀（vite proxy 会自动剥离转发）
 - **租户名后缀固定**：租户重命名时前端强制追加 `的记账本`，保存时拼接，显示时可剥离后缀展示前缀
+- **axios 全局错误拦截**：`api.ts` 响应拦截器已统一处理 `code !== 0`，自动 reject 并携带 `message`；所有 `catch` 块可直接读 `err.message` 展示 Toast，不需要在每个调用处重复判断 code
 
 ### 部署
 

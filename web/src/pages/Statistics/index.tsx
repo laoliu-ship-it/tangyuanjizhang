@@ -4,7 +4,7 @@ import {
   BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer,
   PieChart, Pie, Cell, Tooltip as PieTooltip
 } from 'recharts'
-import { statisticsApi, type MonthlyStatistics, type YearlyStatistics, type RangeStatistics } from '../../services/api'
+import { statisticsApi, type MonthlyStatistics, type YearlyStatistics, type RangeStatistics, type MerchantStat } from '../../services/api'
 
 const COLORS = [
   '#3b82f6', '#ef4444', '#22c55e', '#f59e0b', '#8b5cf6',
@@ -90,6 +90,8 @@ export default function Statistics() {
 
   const [data, setData] = useState<MonthlyStatistics | YearlyStatistics | RangeStatistics | null>(null)
   const [loading, setLoading] = useState(true)
+  const [merchants, setMerchants] = useState<MerchantStat[]>([])
+  const [merchantRefreshing, setMerchantRefreshing] = useState(false)
 
   const load = useCallback(async () => {
     setLoading(true)
@@ -102,11 +104,29 @@ export default function Statistics() {
       } else {
         res = await statisticsApi.range(startDate, endDate)
       }
-      setData(res.data.data)
+      const result = res.data.data
+      setData(result)
+      setMerchants(result?.top_merchants ?? [])
     } catch {
       alert('加载统计数据失败')
     } finally {
       setLoading(false)
+    }
+  }, [view, year, month, yearOnly, startDate, endDate])
+
+  const handleRefreshMerchants = useCallback(async () => {
+    setMerchantRefreshing(true)
+    try {
+      const params =
+        view === 'monthly' ? { view: 'monthly' as const, year, month } :
+        view === 'yearly'  ? { view: 'yearly'  as const, year: yearOnly } :
+                             { view: 'range'   as const, start: startDate, end: endDate }
+      const res = await statisticsApi.refreshMerchants(params)
+      setMerchants(res.data.data?.top_merchants ?? [])
+    } catch {
+      alert('刷新失败')
+    } finally {
+      setMerchantRefreshing(false)
     }
   }, [view, year, month, yearOnly, startDate, endDate])
 
@@ -303,6 +323,65 @@ export default function Statistics() {
                   <Bar dataKey="支出" fill="#ef4444" radius={[3, 3, 0, 0]} />
                 </BarChart>
               </ResponsiveContainer>
+            )}
+          </div>
+
+          {/* 商户支出 Top10 */}
+          <div className="bg-white rounded-2xl p-4 md:p-5 shadow-sm border border-gray-100 mb-6">
+            <div className="flex items-center justify-between mb-4">
+              <h3 className="text-base font-semibold text-gray-800">商户支出 Top10</h3>
+              <button
+                onClick={handleRefreshMerchants}
+                disabled={merchantRefreshing}
+                className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium text-blue-600 bg-blue-50 hover:bg-blue-100 disabled:opacity-50 rounded-lg transition-colors"
+              >
+                <svg
+                  className={`w-3.5 h-3.5 ${merchantRefreshing ? 'animate-spin' : ''}`}
+                  fill="none" stroke="currentColor" viewBox="0 0 24 24"
+                >
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2}
+                    d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
+                </svg>
+                {merchantRefreshing ? '刷新中...' : '刷新'}
+              </button>
+            </div>
+            {merchants.length === 0 ? (
+              <div className="h-32 flex items-center justify-center text-gray-400 text-sm">暂无商户支出数据</div>
+            ) : (
+              <div className="space-y-3">
+                {merchants.map((m, index) => {
+                  const maxTotal = merchants[0]?.total ?? 1
+                  const pct = Math.round((m.total / maxTotal) * 100)
+                  return (
+                    <div key={m.merchant_id} className="flex items-center gap-3">
+                      <span className={`w-5 h-5 rounded-full flex items-center justify-center text-xs font-bold flex-shrink-0 ${
+                        index === 0 ? 'bg-red-500 text-white' :
+                        index === 1 ? 'bg-orange-400 text-white' :
+                        index === 2 ? 'bg-yellow-400 text-white' :
+                        'bg-gray-100 text-gray-500'
+                      }`}>{index + 1}</span>
+                      <div className="flex-1 min-w-0">
+                        <div className="flex items-center justify-between mb-1">
+                          <span className="text-sm text-gray-700 truncate max-w-[140px]">{m.merchant_name}</span>
+                          <div className="flex items-center gap-2 flex-shrink-0">
+                            <span className="text-xs text-gray-400">{m.tx_count}笔</span>
+                            <span className="text-sm font-semibold text-red-500">¥{m.total.toFixed(2)}</span>
+                          </div>
+                        </div>
+                        <div className="h-1.5 bg-gray-100 rounded-full overflow-hidden">
+                          <div
+                            className="h-full rounded-full transition-all duration-500"
+                            style={{
+                              width: `${pct}%`,
+                              backgroundColor: COLORS[index % COLORS.length],
+                            }}
+                          />
+                        </div>
+                      </div>
+                    </div>
+                  )
+                })}
+              </div>
             )}
           </div>
 

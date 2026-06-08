@@ -312,6 +312,19 @@ type StatisticsResp struct {
 	EndDate      string  `json:"end_date,omitempty"`
 }
 
+type MerchantStat struct {
+	MerchantID   uint64  `json:"merchant_id"`
+	MerchantName string  `json:"merchant_name"`
+	Total        float64 `json:"total"`
+	TxCount      int     `json:"tx_count"`
+}
+
+type MerchantStatsResp struct {
+	TopMerchants []*MerchantStat `json:"top_merchants"`
+	ComputedAt   string          `json:"computed_at,omitempty"`
+	FromCache    bool            `json:"from_cache"`
+}
+
 // ========== RBAC ==========
 
 type PermissionEntry struct {
@@ -351,11 +364,12 @@ type CategoryStat struct {
 
 // MonthlyStatResp 月统计响应
 type MonthlyStatResp struct {
-	Year       int              `json:"year"`
-	Month      int              `json:"month"`
-	Total      StatisticsResp   `json:"total"`
-	Daily      []*DailyStatResp `json:"daily"`
-	Categories []*CategoryStat  `json:"categories"`
+	Year         int              `json:"year"`
+	Month        int              `json:"month"`
+	Total        StatisticsResp   `json:"total"`
+	Daily        []*DailyStatResp `json:"daily"`
+	Categories   []*CategoryStat  `json:"categories"`
+	TopMerchants []*MerchantStat  `json:"top_merchants"`
 }
 
 // MonthSummary 月度汇总（年视图用）
@@ -367,17 +381,19 @@ type MonthSummary struct {
 
 // YearlyStatResp 年统计响应
 type YearlyStatResp struct {
-	Year       int              `json:"year"`
-	Total      StatisticsResp   `json:"total"`
-	Monthly    []*MonthSummary  `json:"monthly"`
-	Categories []*CategoryStat  `json:"categories"`
+	Year         int              `json:"year"`
+	Total        StatisticsResp   `json:"total"`
+	Monthly      []*MonthSummary  `json:"monthly"`
+	Categories   []*CategoryStat  `json:"categories"`
+	TopMerchants []*MerchantStat  `json:"top_merchants"`
 }
 
 // RangeStatResp 日期范围统计响应
 type RangeStatResp struct {
-	Total      StatisticsResp   `json:"total"`
-	Daily      []*DailyStatResp `json:"daily"`
-	Categories []*CategoryStat  `json:"categories"`
+	Total        StatisticsResp   `json:"total"`
+	Daily        []*DailyStatResp `json:"daily"`
+	Categories   []*CategoryStat  `json:"categories"`
+	TopMerchants []*MerchantStat  `json:"top_merchants"`
 }
 
 // ========== 平台管理员 ==========

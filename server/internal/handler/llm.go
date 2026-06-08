@@ -10,6 +10,7 @@ import (
 	"fandianjizhang/server/internal/middleware"
 	"fandianjizhang/server/internal/repo"
 	"fandianjizhang/server/internal/service"
+	pkgllm "fandianjizhang/server/pkg/llm"
 
 	"github.com/gin-gonic/gin"
 )
@@ -101,10 +102,7 @@ func (h *LLMHandler) Analyze(c *gin.Context) {
 
 	if err != nil {
 		log.Printf("[LLM] tenant=%d ocr_id=%d 耗时=%.2fs 失败: %v", tenantID, req.OcrID, llmDuration.Seconds(), err)
-		c.JSON(http.StatusOK, dto.OK(dto.LLMAnalyzeResp{
-			Suggestions: nil,
-			Error:       friendlyLLMError(err),
-		}))
+		c.JSON(http.StatusOK, dto.Fail(500, friendlyLLMError(err)))
 		return
 	}
 
@@ -114,33 +112,20 @@ func (h *LLMHandler) Analyze(c *gin.Context) {
 	}))
 }
 
-// friendlyLLMError 将 LLM 技术性错误转换为用户友好的中文提示
+// friendlyLLMError 将 LLM 错误转为用户可读提示，基于错误分类而非 provider 特征字符串
 func friendlyLLMError(err error) string {
-	msg := err.Error()
-
-	// 检测视觉模式不支持的情况
-	if containsStr(msg, "unknown variant") || containsStr(msg, "image_url") || containsStr(msg, "binary") {
-		return "当前模型不支持图片视觉识别，请在设置-AI设置-识别模式改为文字模式（将 OCR 文本发给 AI）或更换为支持视觉的模型"
+	switch pkgllm.ClassifyError(err) {
+	case pkgllm.ErrKindRateLimit:
+		return "AI 服务请求过于频繁，请稍等片刻后重试"
+	case pkgllm.ErrKindAuth:
+		return "AI API Key 无效或无权限，请在设置中检查 API Key 配置"
+	case pkgllm.ErrKindBadRequest:
+		return "当前模型不支持该请求（可能是视觉模式与模型不匹配），请在设置中调整识别模式或更换模型"
+	case pkgllm.ErrKindTimeout:
+		return "AI 分析超时，请稍后重试"
+	case pkgllm.ErrKindUnavailable:
+		return "AI 服务暂时不可用，请稍后重试"
+	default:
+		return "AI 分析失败：" + err.Error()
 	}
-
-	// 检测 API 调用失败
-	if containsStr(msg, "400") || containsStr(msg, "401") || containsStr(msg, "403") {
-		return "LLM API 调用失败，请检查 API Key 和模型配置是否正确"
-	}
-
-	if containsStr(msg, "timeout") || containsStr(msg, "超时") {
-		return "LLM 分析超时，请稍后重试"
-	}
-
-	// 默认提示
-	return "AI 分析失败：" + msg
-}
-
-func containsStr(s, substr string) bool {
-	for i := 0; i <= len(s)-len(substr); i++ {
-		if s[i:i+len(substr)] == substr {
-			return true
-		}
-	}
-	return false
 }

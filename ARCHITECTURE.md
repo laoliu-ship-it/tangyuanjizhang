@@ -17,8 +17,9 @@
                                 └──────────────┘
 ```
 
-**部署方式**：Docker Compose 管理两个容器（Go 后端 + OCR 服务），MySQL 运行在宿主机。
-后端通过 `host.docker.internal` 访问宿主机 MySQL（Linux 需配置 `extra_hosts: host-gateway`）。
+**部署方式**：
+- **本地/NAS**：Docker Compose 管理两个容器（Go 后端 + OCR 服务），MySQL 运行在宿主机，后端通过 `host.docker.internal` 访问（Linux 需配置 `extra_hosts: host-gateway`）
+- **生产服务器（ddd.com）**：原生 systemd 部署（`make prod` → `scripts/deploy-server.sh`），Go 二进制直接运行，环境变量通过 `/www/wwwroot/.../.env` 文件管理，OCR 服务另行部署；deploy 脚本负责同步必要的 `.env` 配置
 
 ---
 
@@ -52,7 +53,7 @@ server/
     └── storage/              # 本地磁盘存储，路径格式 uploads/{tenantID}/{date}/
 ```
 
-**响应格式统一**：`{"code": 0, "message": "ok", "data": ...}`，错误时 code 非 0。
+**响应格式统一**：`{"code": 0, "message": "ok", "data": ...}`，错误时 code 非 0。前端 `api.ts` 响应拦截器检测 `code !== 0` 并自动 `Promise.reject`，所有业务错误（包括分析超时等）均通过此路径统一弹 Toast，handler 层不得用 `dto.OK` 包裹错误信息绕过此机制。
 
 ---
 

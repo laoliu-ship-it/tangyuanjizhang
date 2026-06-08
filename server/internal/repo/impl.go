@@ -98,6 +98,12 @@ func (r *tenantRepo) ListByUserID(ctx context.Context, userID uint64) ([]*model.
 	return tenants, nil
 }
 
+func (r *tenantRepo) ListAll(ctx context.Context) ([]*model.Tenant, error) {
+	var tenants []*model.Tenant
+	err := r.db.WithContext(ctx).Where("deleted_at IS NULL").Find(&tenants).Error
+	return tenants, err
+}
+
 func (r *tenantRepo) Update(ctx context.Context, tenant *model.Tenant) error {
 	return r.db.WithContext(ctx).Save(tenant).Error
 }
@@ -594,6 +600,106 @@ func (r *transactionRepo) YearlyCategoryStats(ctx context.Context, tenantID uint
 		Order("total DESC").
 		Scan(&rows).Error
 	return rows, err
+}
+
+// ========== 商户统计 ==========
+
+type merchantStatRow struct {
+	MerchantID   uint64  `gorm:"column:merchant_id"`
+	MerchantName string  `gorm:"column:merchant_name"`
+	Total        float64 `gorm:"column:total"`
+	TxCount      int     `gorm:"column:tx_count"`
+}
+
+func merchantStatRows(rows []merchantStatRow) []*dto.MerchantStat {
+	result := make([]*dto.MerchantStat, 0, len(rows))
+	for _, r := range rows {
+		result = append(result, &dto.MerchantStat{
+			MerchantID:   r.MerchantID,
+			MerchantName: r.MerchantName,
+			Total:        r.Total,
+			TxCount:      r.TxCount,
+		})
+	}
+	return result
+}
+
+func (r *transactionRepo) MonthlyMerchantStats(ctx context.Context, tenantID uint64, year, month int) ([]*dto.MerchantStat, error) {
+	var rows []merchantStatRow
+	err := r.db.WithContext(ctx).
+		Table("transactions t").
+		Select(`t.merchant_id, m.name AS merchant_name, COALESCE(SUM(t.amount),0) AS total, COUNT(t.id) AS tx_count`).
+		Joins("JOIN merchants m ON t.merchant_id = m.id AND m.deleted_at IS NULL").
+		Where("t.tenant_id = ? AND t.type = 'expense' AND YEAR(t.transaction_date) = ? AND MONTH(t.transaction_date) = ? AND t.deleted_at IS NULL AND t.merchant_id > 0",
+			tenantID, year, month).
+		Group("t.merchant_id, m.name").
+		Order("total DESC").
+		Limit(10).
+		Scan(&rows).Error
+	return merchantStatRows(rows), err
+}
+
+func (r *transactionRepo) YearlyMerchantStats(ctx context.Context, tenantID uint64, year int) ([]*dto.MerchantStat, error) {
+	var rows []merchantStatRow
+	err := r.db.WithContext(ctx).
+		Table("transactions t").
+		Select(`t.merchant_id, m.name AS merchant_name, COALESCE(SUM(t.amount),0) AS total, COUNT(t.id) AS tx_count`).
+		Joins("JOIN merchants m ON t.merchant_id = m.id AND m.deleted_at IS NULL").
+		Where("t.tenant_id = ? AND t.type = 'expense' AND YEAR(t.transaction_date) = ? AND t.deleted_at IS NULL AND t.merchant_id > 0",
+			tenantID, year).
+		Group("t.merchant_id, m.name").
+		Order("total DESC").
+		Limit(10).
+		Scan(&rows).Error
+	return merchantStatRows(rows), err
+}
+
+func (r *transactionRepo) RangeMerchantStats(ctx context.Context, tenantID uint64, start, end string) ([]*dto.MerchantStat, error) {
+	var rows []merchantStatRow
+	err := r.db.WithContext(ctx).
+		Table("transactions t").
+		Select(`t.merchant_id, m.name AS merchant_name, COALESCE(SUM(t.amount),0) AS total, COUNT(t.id) AS tx_count`).
+		Joins("JOIN merchants m ON t.merchant_id = m.id AND m.deleted_at IS NULL").
+		Where("t.tenant_id = ? AND t.type = 'expense' AND DATE(t.transaction_date) >= ? AND DATE(t.transaction_date) <= ? AND t.deleted_at IS NULL AND t.merchant_id > 0",
+			tenantID, start, end).
+		Group("t.merchant_id, m.name").
+		Order("total DESC").
+		Limit(10).
+		Scan(&rows).Error
+	return merchantStatRows(rows), err
+}
+
+// ========== StatsCacheRepo ==========
+
+type statsCacheRepo struct {
+	db *gorm.DB
+}
+
+func NewStatsCacheRepo(db *gorm.DB) StatsCacheRepo {
+	return &statsCacheRepo{db: db}
+}
+
+func (r *statsCacheRepo) Get(ctx context.Context, tenantID uint64, cacheType, periodKey string) (*model.StatsCache, error) {
+	var cache model.StatsCache
+	err := r.db.WithContext(ctx).
+		Where("tenant_id = ? AND cache_type = ? AND period_key = ?", tenantID, cacheType, periodKey).
+		First(&cache).Error
+	if err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return nil, nil
+		}
+		return nil, err
+	}
+	return &cache, nil
+}
+
+func (r *statsCacheRepo) Upsert(ctx context.Context, cache *model.StatsCache) error {
+	return r.db.WithContext(ctx).Exec(
+		`INSERT INTO stats_cache (tenant_id, cache_type, period_key, data, computed_at)
+		 VALUES (?, ?, ?, ?, ?)
+		 ON DUPLICATE KEY UPDATE data = VALUES(data), computed_at = VALUES(computed_at)`,
+		cache.TenantID, cache.CacheType, cache.PeriodKey, cache.Data, cache.ComputedAt,
+	).Error
 }
 
 // ========== TenantLLMConfigRepo ==========

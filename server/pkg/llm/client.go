@@ -5,6 +5,7 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
+	"log"
 	"os"
 	"regexp"
 	"strings"
@@ -18,7 +19,70 @@ import (
 	"github.com/tmc/langchaingo/llms/openai"
 )
 
+const maxRetries = 3
+
 var jsonFenceRe = regexp.MustCompile("(?s)^```(?:json)?\\s*|\\s*```$")
+
+// ErrKind 对外暴露的错误分类，与具体 provider 无关
+type ErrKind int
+
+const (
+	ErrKindUnknown     ErrKind = iota
+	ErrKindRateLimit           // 429 / 并发超限 / RPM 超限
+	ErrKindAuth                // API Key 错误 / 无权限
+	ErrKindBadRequest          // 请求参数或模型不支持
+	ErrKindTimeout             // 客户端或服务端超时
+	ErrKindUnavailable         // 服务暂时不可用
+)
+
+// ClassifyError 将任意 provider 返回的原始 error 归类，langchaingo 标准类型优先，
+// 不认识的 fallback 到字符串特征匹配，确保换 provider 后仍能正确分类。
+func ClassifyError(err error) ErrKind {
+	if err == nil {
+		return ErrKindUnknown
+	}
+	// 优先使用 langchaingo 已标准化的错误码
+	switch {
+	case llms.IsRateLimitError(err) || llms.IsQuotaExceededError(err):
+		return ErrKindRateLimit
+	case llms.IsAuthenticationError(err):
+		return ErrKindAuth
+	case llms.IsInvalidRequestError(err):
+		return ErrKindBadRequest
+	case llms.IsTimeoutError(err) || llms.IsCanceledError(err):
+		return ErrKindTimeout
+	case llms.IsProviderUnavailableError(err):
+		return ErrKindUnavailable
+	}
+	// fallback：字符串特征，覆盖尚未被 langchaingo 标准化的 provider
+	msg := strings.ToLower(err.Error())
+	switch {
+	case containsAny(msg, "429", "rate_limit", "rate limit", "too many requests", "ratelimit", "concurrent"):
+		return ErrKindRateLimit
+	case containsAny(msg, "401", "403", "api key", "apikey", "unauthorized", "forbidden", "authentication"):
+		return ErrKindAuth
+	case containsAny(msg, "timeout", "deadline", "context deadline"):
+		return ErrKindTimeout
+	case containsAny(msg, "503", "502", "unavailable", "overloaded"):
+		return ErrKindUnavailable
+	case containsAny(msg, "400", "invalid", "unsupported", "image_url", "unknown variant", "binary"):
+		return ErrKindBadRequest
+	}
+	return ErrKindUnknown
+}
+
+func containsAny(s string, subs ...string) bool {
+	for _, sub := range subs {
+		if strings.Contains(s, sub) {
+			return true
+		}
+	}
+	return false
+}
+
+func isRateLimitErr(err error) bool {
+	return ClassifyError(err) == ErrKindRateLimit
+}
 
 // Client LLM 客户端，封装 langchaingo
 type Client struct {
@@ -90,7 +154,7 @@ func (c *Client) analyzeOCRText(ctx context.Context, rawTexts []string, categori
 		},
 	}
 
-	resp, err := c.model.GenerateContent(ctx, messages, llms.WithTemperature(0.1))
+	resp, err := c.generateWithRetry(ctx, messages)
 	if err != nil {
 		return nil, fmt.Errorf("LLM 调用失败: %w", err)
 	}
@@ -120,7 +184,7 @@ func (c *Client) analyzeVision(ctx context.Context, imagePath string, categories
 		},
 	}
 
-	resp, err := c.model.GenerateContent(ctx, messages, llms.WithTemperature(0.1))
+	resp, err := c.generateWithRetry(ctx, messages)
 	if err != nil {
 		return nil, fmt.Errorf("LLM vision 调用失败: %w", err)
 	}
@@ -128,6 +192,30 @@ func (c *Client) analyzeVision(ctx context.Context, imagePath string, categories
 		return nil, fmt.Errorf("LLM 返回空响应")
 	}
 	return c.parseJSON(resp.Choices[0].Content)
+}
+
+// generateWithRetry 调用 LLM，遇到 429 限流时指数退避重试
+func (c *Client) generateWithRetry(ctx context.Context, messages []llms.MessageContent) (*llms.ContentResponse, error) {
+	var lastErr error
+	delay := 5 * time.Second // DeepSeek RPM 窗口通常 10s+，起步 5s
+	for i := 0; i < maxRetries; i++ {
+		resp, err := c.model.GenerateContent(ctx, messages, llms.WithTemperature(0.1))
+		if err == nil {
+			return resp, nil
+		}
+		lastErr = err
+		if !isRateLimitErr(err) {
+			return nil, err
+		}
+		log.Printf("[LLM] 429 限流，第 %d/%d 次重试，等待 %s 后重试，错误: %v", i+1, maxRetries, delay, err)
+		select {
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		case <-time.After(delay):
+		}
+		delay *= 2 // 5s → 10s → 20s
+	}
+	return nil, lastErr
 }
 
 func (c *Client) parseJSON(raw string) ([]*dto.LLMSuggestion, error) {

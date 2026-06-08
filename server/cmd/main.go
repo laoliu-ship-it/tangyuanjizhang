@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"fmt"
 	"io/fs"
 	"log"
@@ -18,8 +19,8 @@ import (
 	"fandianjizhang/server/internal/repo"
 	"fandianjizhang/server/internal/service"
 	"fandianjizhang/server/pkg/excel"
-	pkgocr "fandianjizhang/server/pkg/ocr"
 	pkgllm "fandianjizhang/server/pkg/llm"
+	pkgocr "fandianjizhang/server/pkg/ocr"
 	"fandianjizhang/server/pkg/storage"
 	webstatic "fandianjizhang/server/web"
 
@@ -55,8 +56,25 @@ func main() {
 		&model.OcrRecord{},
 		&model.PlatformAdmin{},
 		&model.PlatformConfig{},
+		&model.StatsCache{},
 	); err != nil {
 		log.Fatalf("数据库迁移失败: %v", err)
+	}
+
+	// 统计查询复合索引（兼容 MySQL 5.7，先查 information_schema 再建）
+	for _, idx := range []struct{ name, ddl string }{
+		{"idx_tx_stats", "CREATE INDEX idx_tx_stats ON transactions (tenant_id, transaction_date, type, amount)"},
+		{"idx_tx_merchant", "CREATE INDEX idx_tx_merchant ON transactions (tenant_id, merchant_id, type, amount)"},
+	} {
+		var count int64
+		db.Raw("SELECT COUNT(*) FROM information_schema.statistics WHERE table_schema = DATABASE() AND table_name = 'transactions' AND index_name = ?", idx.name).Scan(&count)
+		if count == 0 {
+			if err := db.Exec(idx.ddl).Error; err != nil {
+				log.Printf("[index] 创建索引 %s 失败: %v", idx.name, err)
+			} else {
+				log.Printf("[index] 创建索引 %s 成功", idx.name)
+			}
+		}
 	}
 
 	// 初始化平台配置（不存在时插入默认值）
@@ -99,6 +117,7 @@ func main() {
 	platformAdminRepo := repo.NewPlatformAdminRepo(db)
 	platformStatsRepo := repo.NewPlatformStatsRepo(db)
 	platformConfigRepo := repo.NewPlatformConfigRepo(db)
+	statsCacheRepo := repo.NewStatsCacheRepo(db)
 
 	// 初始化 OCR 引擎（带可配置缓存）
 	ocrEngine, err := pkgocr.NewEngine(cfg, platformConfigRepo)
@@ -119,7 +138,7 @@ func main() {
 	merchantSvc := service.NewMerchantService(merchantRepo)
 	transactionSvc := service.NewTransactionService(transactionRepo, categoryRepo, merchantRepo)
 	ocrSvc := service.NewOCRService(ocrEngine, cfg.OCR.AIMode)
-	statisticsSvc := service.NewStatisticsService(transactionRepo)
+	statisticsSvc := service.NewStatisticsService(transactionRepo, statsCacheRepo, tenantRepo)
 	llmSvc := service.NewLLMService(cfg.LLM, llmConfigRepo)
 	// LLM 缓存：从平台配置读取缓存类型和 TTL
 	var llmSvcI service.LLMService = llmSvc
@@ -260,6 +279,10 @@ func main() {
 		tenant.GET("/statistics/range",
 			middleware.Casbin(enforcerPool, "statistics", "read"),
 			statisticsHandler.Range)
+		// 手动刷新商户 Top10 缓存
+		tenant.POST("/statistics/merchants/refresh",
+			middleware.Casbin(enforcerPool, "statistics", "read"),
+			statisticsHandler.RefreshMerchants)
 
 		// 导出（所有成员可读）
 		tenant.GET("/export/excel",
@@ -371,6 +394,9 @@ func main() {
 	// Seed platform admin from env (must succeed before starting HTTP server)
 	ensurePlatformAdmin(db)
 
+	// 凌晨3点定时预计算统计缓存
+	go scheduleDailyStatsJob(statisticsSvc)
+
 	// 静态文件服务（上传的图片）
 	r.Static("/uploads", cfg.Upload.Path)
 
@@ -453,4 +479,23 @@ func getEnv(key, defaultVal string) string {
 		return v
 	}
 	return defaultVal
+}
+
+// scheduleDailyStatsJob 每天凌晨3点执行统计预计算
+func scheduleDailyStatsJob(svc service.StatisticsService) {
+	for {
+		now := time.Now()
+		next := time.Date(now.Year(), now.Month(), now.Day(), 3, 0, 0, 0, now.Location())
+		if !next.After(now) {
+			next = next.Add(24 * time.Hour)
+		}
+		log.Printf("[stats job] 下次执行时间: %s", next.Format("2006-01-02 15:04:05"))
+		time.Sleep(time.Until(next))
+
+		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
+		if err := svc.RunDailyJob(ctx); err != nil {
+			log.Printf("[stats job] 执行失败: %v", err)
+		}
+		cancel()
+	}
 }

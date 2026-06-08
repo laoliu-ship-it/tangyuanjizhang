@@ -12,6 +12,28 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
+// RefreshMerchants 手动刷新商户 Top10（实时查询 + 更新缓存）
+// POST /api/statistics/merchants/refresh?view=monthly&year=2026&month=6
+// POST /api/statistics/merchants/refresh?view=yearly&year=2026
+// POST /api/statistics/merchants/refresh?view=range&start=2026-01-01&end=2026-06-05
+func (h *StatisticsHandler) RefreshMerchants(c *gin.Context) {
+	tenantID := middleware.GetTenantID(c)
+	view := c.DefaultQuery("view", "monthly")
+
+	now := time.Now()
+	year, _ := strconv.Atoi(c.DefaultQuery("year", strconv.Itoa(now.Year())))
+	month, _ := strconv.Atoi(c.DefaultQuery("month", strconv.Itoa(int(now.Month()))))
+	start := c.DefaultQuery("start", "")
+	end := c.DefaultQuery("end", "")
+
+	result, err := h.statisticsSvc.RefreshMerchants(c.Request.Context(), tenantID, view, year, month, start, end)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, dto.Fail(500, "刷新商户统计失败: "+err.Error()))
+		return
+	}
+	c.JSON(http.StatusOK, dto.OK(result))
+}
+
 type StatisticsHandler struct {
 	statisticsSvc service.StatisticsService
 }

@@ -20,6 +20,7 @@ type TenantRepo interface {
 	Create(ctx context.Context, tenant *model.Tenant) error
 	GetByID(ctx context.Context, id uint64) (*model.Tenant, error)
 	ListByUserID(ctx context.Context, userID uint64) ([]*model.Tenant, error)
+	ListAll(ctx context.Context) ([]*model.Tenant, error)
 	Update(ctx context.Context, tenant *model.Tenant) error
 }
 
@@ -70,6 +71,15 @@ type TransactionRepo interface {
 	RangeCategoryStats(ctx context.Context, tenantID uint64, start, end string) ([]*dto.CategoryStat, error)
 	YearlyStats(ctx context.Context, tenantID uint64, year int) ([]*dto.MonthSummary, error)
 	YearlyCategoryStats(ctx context.Context, tenantID uint64, year int) ([]*dto.CategoryStat, error)
+	MonthlyMerchantStats(ctx context.Context, tenantID uint64, year, month int) ([]*dto.MerchantStat, error)
+	YearlyMerchantStats(ctx context.Context, tenantID uint64, year int) ([]*dto.MerchantStat, error)
+	RangeMerchantStats(ctx context.Context, tenantID uint64, start, end string) ([]*dto.MerchantStat, error)
+}
+
+// StatsCacheRepo 统计缓存数据仓库接口
+type StatsCacheRepo interface {
+	Get(ctx context.Context, tenantID uint64, cacheType, periodKey string) (*model.StatsCache, error)
+	Upsert(ctx context.Context, cache *model.StatsCache) error
 }
 
 // OcrRecordRepo OCR记录数据仓库接口

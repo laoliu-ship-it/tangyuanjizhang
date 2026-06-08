@@ -43,8 +43,17 @@ info "编译完成，二进制大小: $BINARY_SIZE"
 info "4. 上传到远程服务器..."
 rsync -az -e ssh "$PROJECT_DIR/dist/server" "$REMOTE_HOST:$REMOTE_DIR/server"
 
-# 5. 重启服务
-info "5. 重启服务..."
+# 5. 确保 .env 包含必要配置
+info "5. 同步 .env 配置..."
+ssh "$REMOTE_HOST" "
+  ENV_FILE=\"$REMOTE_DIR/.env\"
+  grep -q '^LLM_TIMEOUT_SECONDS=' \"\$ENV_FILE\" 2>/dev/null \
+    && sed -i 's/^LLM_TIMEOUT_SECONDS=.*/LLM_TIMEOUT_SECONDS=60/' \"\$ENV_FILE\" \
+    || echo 'LLM_TIMEOUT_SECONDS=60' >> \"\$ENV_FILE\"
+"
+
+# 6. 重启服务
+info "6. 重启服务..."
 ssh "$REMOTE_HOST" "systemctl restart tangyuanjizhang"
 sleep 2
 

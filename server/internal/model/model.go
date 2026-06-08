@@ -123,6 +123,18 @@ type Merchant struct {
 
 func (Merchant) TableName() string { return "merchants" }
 
+// StatsCache 统计缓存表（按租户+类型+周期存商户 Top10）
+type StatsCache struct {
+	ID         uint64    `gorm:"primaryKey;autoIncrement"`
+	TenantID   uint64    `gorm:"not null;uniqueIndex:uniq_stats_cache"`
+	CacheType  string    `gorm:"type:varchar(20);not null;uniqueIndex:uniq_stats_cache"` // "monthly" | "yearly"
+	PeriodKey  string    `gorm:"type:varchar(20);not null;uniqueIndex:uniq_stats_cache"` // "2026-06" | "2026"
+	Data       string    `gorm:"type:text;not null"`
+	ComputedAt time.Time
+}
+
+func (StatsCache) TableName() string { return "stats_cache" }
+
 // TenantLLMConfig 租户 LLM 配置表（每个租户一条记录）
 type TenantLLMConfig struct {
 	ID          uint64    `gorm:"primaryKey;autoIncrement" json:"id"`

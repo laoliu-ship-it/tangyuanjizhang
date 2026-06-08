@@ -13,7 +13,12 @@ api.interceptors.request.use(config => {
 })
 
 api.interceptors.response.use(
-  res => res,
+  res => {
+    if (res.data?.code !== undefined && res.data.code !== 0) {
+      return Promise.reject(Object.assign(new Error(res.data.message || '请求失败'), { response: res }))
+    }
+    return res
+  },
   err => {
     if (err.response?.status === 401) {
       useAuthStore.getState().logout()
@@ -122,29 +127,6 @@ export interface DailyStatistics {
   total_expense: number
 }
 
-export interface MonthlyStatistics {
-  year: number
-  month: number
-  total: {
-    total_income: number
-    total_expense: number
-    net_amount: number
-  }
-  daily: DailyStatistics[]
-  categories: CategoryStat[]
-}
-
-export interface YearlyStatistics {
-  year: number
-  total: {
-    total_income: number
-    total_expense: number
-    net_amount: number
-  }
-  monthly: MonthSummary[]
-  categories: CategoryStat[]
-}
-
 export interface MonthSummary {
   month: number
   total_income: number
@@ -159,6 +141,44 @@ export interface CategoryStat {
   total: number
 }
 
+export interface MerchantStat {
+  merchant_id: number
+  merchant_name: string
+  total: number
+  tx_count: number
+}
+
+export interface MerchantStatsResp {
+  top_merchants: MerchantStat[]
+  computed_at?: string
+  from_cache: boolean
+}
+
+export interface MonthlyStatistics {
+  year: number
+  month: number
+  total: {
+    total_income: number
+    total_expense: number
+    net_amount: number
+  }
+  daily: DailyStatistics[]
+  categories: CategoryStat[]
+  top_merchants: MerchantStat[]
+}
+
+export interface YearlyStatistics {
+  year: number
+  total: {
+    total_income: number
+    total_expense: number
+    net_amount: number
+  }
+  monthly: MonthSummary[]
+  categories: CategoryStat[]
+  top_merchants: MerchantStat[]
+}
+
 export interface RangeStatistics {
   total: {
     total_income: number
@@ -167,6 +187,7 @@ export interface RangeStatistics {
   }
   daily: DailyStatistics[]
   categories: CategoryStat[]
+  top_merchants: MerchantStat[]
 }
 
 export interface OcrResult {
@@ -311,6 +332,14 @@ export const statisticsApi = {
     api.get<ApiResponse<YearlyStatistics>>('/statistics/yearly', { params: { year } }),
   range: (start: string, end: string) =>
     api.get<ApiResponse<RangeStatistics>>('/statistics/range', { params: { start, end } }),
+  refreshMerchants: (params: {
+    view: 'monthly' | 'yearly' | 'range'
+    year?: number
+    month?: number
+    start?: string
+    end?: string
+  }) =>
+    api.post<ApiResponse<MerchantStatsResp>>('/statistics/merchants/refresh', null, { params }),
 }
 
 // OCR
