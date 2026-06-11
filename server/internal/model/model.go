@@ -24,7 +24,7 @@ type Tenant struct {
 	CreatedAt time.Time  `json:"created_at"`
 	DeletedAt *time.Time `gorm:"index" json:"-"`
 
-	Owner   *User          `gorm:"foreignKey:OwnerID" json:"owner,omitempty"`
+	Owner   *User           `gorm:"foreignKey:OwnerID" json:"owner,omitempty"`
 	Members []*TenantMember `gorm:"foreignKey:TenantID" json:"members,omitempty"`
 }
 
@@ -73,8 +73,8 @@ type Transaction struct {
 	UpdatedAt       time.Time  `json:"updated_at"`
 	DeletedAt       *time.Time `gorm:"index" json:"-"`
 
-	Category *Category   `gorm:"foreignKey:CategoryID" json:"category,omitempty"`
-	Merchant *Merchant   `gorm:"foreignKey:MerchantID" json:"merchant,omitempty"`
+	Category *Category           `gorm:"foreignKey:CategoryID" json:"category,omitempty"`
+	Merchant *Merchant           `gorm:"foreignKey:MerchantID" json:"merchant,omitempty"`
 	Images   []*TransactionImage `gorm:"foreignKey:TransactionID" json:"images,omitempty"`
 }
 
@@ -125,11 +125,11 @@ func (Merchant) TableName() string { return "merchants" }
 
 // StatsCache 统计缓存表（按租户+类型+周期存商户 Top10）
 type StatsCache struct {
-	ID         uint64    `gorm:"primaryKey;autoIncrement"`
-	TenantID   uint64    `gorm:"not null;uniqueIndex:uniq_stats_cache"`
-	CacheType  string    `gorm:"type:varchar(20);not null;uniqueIndex:uniq_stats_cache"` // "monthly" | "yearly"
-	PeriodKey  string    `gorm:"type:varchar(20);not null;uniqueIndex:uniq_stats_cache"` // "2026-06" | "2026"
-	Data       string    `gorm:"type:text;not null"`
+	ID         uint64 `gorm:"primaryKey;autoIncrement"`
+	TenantID   uint64 `gorm:"not null;uniqueIndex:uniq_stats_cache"`
+	CacheType  string `gorm:"type:varchar(20);not null;uniqueIndex:uniq_stats_cache"` // "monthly" | "yearly"
+	PeriodKey  string `gorm:"type:varchar(20);not null;uniqueIndex:uniq_stats_cache"` // "2026-06" | "2026"
+	Data       string `gorm:"type:text;not null"`
 	ComputedAt time.Time
 }
 
@@ -168,11 +168,11 @@ func (MediaFile) TableName() string { return "media_files" }
 
 // TenantSettings 租户通用设置表（每个租户一条记录，不存在时用默认值）
 type TenantSettings struct {
-	ID                   uint64    `gorm:"primaryKey;autoIncrement" json:"id"`
-	TenantID             uint64    `gorm:"not null;uniqueIndex" json:"tenant_id"`
-	RequireExpenseImage  bool      `gorm:"default:true" json:"require_expense_image"` // 支出记录是否必须上传图片
-	CreatedAt            time.Time `json:"created_at"`
-	UpdatedAt            time.Time `json:"updated_at"`
+	ID                  uint64    `gorm:"primaryKey;autoIncrement" json:"id"`
+	TenantID            uint64    `gorm:"not null;uniqueIndex" json:"tenant_id"`
+	RequireExpenseImage bool      `gorm:"default:true" json:"require_expense_image"` // 支出记录是否必须上传图片
+	CreatedAt           time.Time `json:"created_at"`
+	UpdatedAt           time.Time `json:"updated_at"`
 }
 
 func (TenantSettings) TableName() string { return "tenant_settings" }
@@ -192,9 +192,9 @@ func (PlatformAdmin) TableName() string { return "platform_admins" }
 // PlatformConfig 平台配置表（键值对存储）
 type PlatformConfig struct {
 	ID          uint64    `gorm:"primaryKey;autoIncrement" json:"id"`
-	ConfigKey   string    `gorm:"uniqueIndex;size:50;not null" json:"config_key"`   // 配置键
-	ConfigValue string    `gorm:"size:500;not null" json:"config_value"`            // 配置值
-	Description string    `gorm:"size:200;default:''" json:"description"`           // 配置描述
+	ConfigKey   string    `gorm:"uniqueIndex;size:50;not null" json:"config_key"` // 配置键
+	ConfigValue string    `gorm:"size:500;not null" json:"config_value"`          // 配置值
+	Description string    `gorm:"size:200;default:''" json:"description"`         // 配置描述
 	UpdatedAt   time.Time `json:"updated_at"`
 }
 
@@ -202,10 +202,10 @@ func (PlatformConfig) TableName() string { return "platform_configs" }
 
 // 预置配置键常量
 const (
-	ConfigKeyCacheType         = "cache_type"          // "file" 或 "text"
-	ConfigKeyCacheTTLMinutes   = "cache_ttl_minutes"   // 缓存分钟数
-	ConfigKeyOCRCacheEnabled   = "ocr_cache_enabled"   // "true" 或 "false"
-	ConfigKeyLLMCacheEnabled   = "llm_cache_enabled"   // "true" 或 "false"
+	ConfigKeyCacheType       = "cache_type"        // "file" 或 "text"
+	ConfigKeyCacheTTLMinutes = "cache_ttl_minutes" // 缓存分钟数
+	ConfigKeyOCRCacheEnabled = "ocr_cache_enabled" // "true" 或 "false"
+	ConfigKeyLLMCacheEnabled = "llm_cache_enabled" // "true" 或 "false"
 )
 
 // 默认配置值
@@ -213,8 +213,8 @@ var DefaultPlatformConfigs = map[string]struct {
 	Value       string
 	Description string
 }{
-	ConfigKeyCacheType:         {Value: "file", Description: "缓存类型：file（文件SHA256）或 text（文本内容）"},
-	ConfigKeyCacheTTLMinutes:   {Value: "30", Description: "缓存有效期（分钟）"},
-	ConfigKeyOCRCacheEnabled:   {Value: "true", Description: "是否启用 OCR 缓存"},
-	ConfigKeyLLMCacheEnabled:   {Value: "true", Description: "是否启用 LLM 缓存"},
+	ConfigKeyCacheType:       {Value: "file", Description: "缓存类型：file（文件SHA256）或 text（文本内容）"},
+	ConfigKeyCacheTTLMinutes: {Value: "30", Description: "缓存有效期（分钟）"},
+	ConfigKeyOCRCacheEnabled: {Value: "true", Description: "是否启用 OCR 缓存"},
+	ConfigKeyLLMCacheEnabled: {Value: "true", Description: "是否启用 LLM 缓存"},
 }
