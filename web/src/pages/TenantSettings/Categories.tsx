@@ -11,6 +11,11 @@ export default function Categories() {
   const [addIcon, setAddIcon] = useState('📌')
   const [adding, setAdding] = useState(false)
   const [deletingId, setDeletingId] = useState<number | null>(null)
+  const [editingId, setEditingId] = useState<number | null>(null)
+  const [editName, setEditName] = useState('')
+  const [editIcon, setEditIcon] = useState('')
+  const [editType, setEditType] = useState<'income' | 'expense'>('expense')
+  const [updating, setUpdating] = useState(false)
 
   const loadCategories = useCallback(async () => {
     setLoading(true)
@@ -70,6 +75,38 @@ export default function Categories() {
       alert('删除失败')
     } finally {
       setDeletingId(null)
+    }
+  }
+
+  function startEdit(category: Category) {
+    setEditingId(category.id)
+    setEditName(category.name)
+    setEditIcon(category.icon || '📌')
+    setEditType(category.type)
+  }
+
+  function cancelEdit() {
+    setEditingId(null)
+    setEditName('')
+    setEditIcon('')
+    setEditType('expense')
+  }
+
+  async function handleUpdate(id: number) {
+    if (!editName.trim()) {
+      alert('请输入分类名称')
+      return
+    }
+    setUpdating(true)
+    try {
+      await categoryApi.update(id, { name: editName.trim(), type: editType, icon: editIcon })
+      cancelEdit()
+      loadCategories()
+    } catch (err: unknown) {
+      const msg = (err as { response?: { data?: { message?: string } } })?.response?.data?.message
+      alert(msg || '更新分类失败')
+    } finally {
+      setUpdating(false)
     }
   }
 
@@ -166,18 +203,107 @@ export default function Categories() {
             ) : (
               <ul className="divide-y divide-gray-50">
                 {(addType === 'expense' ? expenseCategories : incomeCategories).map(c => (
-                  <li key={c.id} className="flex items-center justify-between px-5 py-3">
-                    <div className="flex items-center gap-3">
-                      <span className="text-xl">{c.icon || '📌'}</span>
-                      <span className="text-sm font-medium text-gray-700">{c.name}</span>
-                    </div>
-                    <button
-                      onClick={() => handleDelete(c.id)}
-                      disabled={deletingId === c.id}
-                      className="text-sm text-red-500 hover:text-red-700 disabled:opacity-50 transition-colors"
-                    >
-                      {deletingId === c.id ? '删除中' : '删除'}
-                    </button>
+                  <li key={c.id} className="px-5 py-3">
+                    {editingId === c.id ? (
+                      <form onSubmit={(e) => { e.preventDefault(); handleUpdate(c.id) }} className="space-y-3">
+                        {/* 类型切换 */}
+                        <div className="flex rounded-xl overflow-hidden border border-gray-200">
+                          <button
+                            type="button"
+                            onClick={() => setEditType('expense')}
+                            className={`flex-1 py-2 text-sm font-medium transition-colors ${
+                              editType === 'expense' ? 'bg-red-500 text-white' : 'bg-white text-gray-500 hover:bg-gray-50'
+                            }`}
+                          >
+                            支出
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => setEditType('income')}
+                            className={`flex-1 py-2 text-sm font-medium transition-colors ${
+                              editType === 'income' ? 'bg-green-500 text-white' : 'bg-white text-gray-500 hover:bg-gray-50'
+                            }`}
+                          >
+                            收入
+                          </button>
+                        </div>
+
+                        {/* 图标选择 */}
+                        <div>
+                          <p className="text-xs text-gray-500 mb-2">选择图标</p>
+                          <div className="flex flex-wrap gap-2 mb-2">
+                            {COMMON_ICONS.map(icon => (
+                              <button
+                                key={icon}
+                                type="button"
+                                onClick={() => setEditIcon(icon)}
+                                className={`w-9 h-9 rounded-lg text-lg flex items-center justify-center border transition-colors ${
+                                  editIcon === icon ? 'border-blue-500 bg-blue-50' : 'border-gray-200 hover:bg-gray-50'
+                                }`}
+                              >
+                                {icon}
+                              </button>
+                            ))}
+                          </div>
+                          <input
+                            type="text"
+                            value={editIcon}
+                            onChange={e => setEditIcon(e.target.value)}
+                            placeholder="或输入 emoji"
+                            maxLength={4}
+                            className="w-24 px-3 py-1.5 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+                          />
+                        </div>
+
+                        {/* 名称输入和操作按钮 */}
+                        <div className="flex gap-3">
+                          <input
+                            type="text"
+                            value={editName}
+                            onChange={e => setEditName(e.target.value)}
+                            placeholder="分类名称"
+                            className="flex-1 px-4 py-2.5 border border-gray-300 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+                          />
+                          <button
+                            type="submit"
+                            disabled={updating}
+                            className="px-5 py-2.5 bg-blue-600 hover:bg-blue-700 disabled:bg-blue-300 text-white text-sm font-medium rounded-xl transition-colors"
+                          >
+                            {updating ? '保存中...' : '保存'}
+                          </button>
+                          <button
+                            type="button"
+                            onClick={cancelEdit}
+                            disabled={updating}
+                            className="px-5 py-2.5 bg-gray-100 hover:bg-gray-200 disabled:bg-gray-50 text-gray-700 text-sm font-medium rounded-xl transition-colors"
+                          >
+                            取消
+                          </button>
+                        </div>
+                      </form>
+                    ) : (
+                      <div className="flex items-center justify-between">
+                        <div className="flex items-center gap-3">
+                          <span className="text-xl">{c.icon || '📌'}</span>
+                          <span className="text-sm font-medium text-gray-700">{c.name}</span>
+                        </div>
+                        <div className="flex items-center gap-3">
+                          <button
+                            onClick={() => startEdit(c)}
+                            className="text-sm text-blue-500 hover:text-blue-700 transition-colors"
+                          >
+                            编辑
+                          </button>
+                          <button
+                            onClick={() => handleDelete(c.id)}
+                            disabled={deletingId === c.id}
+                            className="text-sm text-red-500 hover:text-red-700 disabled:opacity-50 transition-colors"
+                          >
+                            {deletingId === c.id ? '删除中' : '删除'}
+                          </button>
+                        </div>
+                      </div>
+                    )}
                   </li>
                 ))}
               </ul>

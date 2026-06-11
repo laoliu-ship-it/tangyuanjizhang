@@ -354,7 +354,7 @@ export default function TransactionForm({ open, onClose, onSuccess, initialData,
                 const catId = llm.category_id ?? 0
                 const catName = catId
                   ? (categories.find(c => c.id === catId)?.name ?? llm.category_hint ?? '')
-                  : (llm.category_hint ?? '')
+                  : (llm.category_hint ? `⚠ 未匹配-${llm.category_hint}` : '未分类')
                 let formattedDate: string
                 if (llm.date) {
                   const hasTime = /\d{2}:\d{2}$/.test(llm.date.trim())
@@ -429,7 +429,7 @@ export default function TransactionForm({ open, onClose, onSuccess, initialData,
             const catId = llm.category_id ?? 0
             const catName = catId
               ? (categories.find(c => c.id === catId)?.name ?? llm.category_hint ?? '')
-              : (llm.category_hint ?? '')
+              : (llm.category_hint ? `⚠ 未匹配-${llm.category_hint}` : '未分类')
             let formattedDate: string
             if (llm.date) {
               const hasTime = /\d{2}:\d{2}$/.test(llm.date.trim())
@@ -637,7 +637,7 @@ export default function TransactionForm({ open, onClose, onSuccess, initialData,
     }
     const resolvedCatName = patch.categoryId
       ? (categories.find(c => c.id === patch.categoryId)?.name ?? llm.category_hint ?? '')
-      : (llm.category_hint ?? '')
+      : (llm.category_hint ? `⚠ 未匹配-${llm.category_hint}` : '未分类')
     patchForm(patch)
 
     // 标记 source_lines 对应的所有 OCR 词条为已使用（划线）
@@ -761,6 +761,17 @@ export default function TransactionForm({ open, onClose, onSuccess, initialData,
     if (submittingRef.current) return
     const draftsToSave = overrideDrafts ?? currentDrafts
     if (draftsToSave.length === 0) return
+
+    // 防御性校验：确保所有草稿都有有效分类（LLM 可能只给出 category_hint 但无有效 ID）
+    for (let i = 0; i < draftsToSave.length; i++) {
+      const draft = draftsToSave[i]
+      if (!draft.categoryId || draft.categoryId <= 0) {
+        const label = draftsToSave.length > 1 ? `第${i + 1}笔` : '该笔'
+        setToast({ text: `${label}记录"${draft.categoryName || '未分类'}"未匹配有效分类，请在列表中点击「编辑」选择系统已有分类`, error: true })
+        setTimeout(() => setToast(null), 5000)
+        return
+      }
+    }
 
     submittingRef.current = true
     setSaving(true)
@@ -1300,18 +1311,20 @@ export default function TransactionForm({ open, onClose, onSuccess, initialData,
 
                 {/* 已暂存的草稿列表 */}
                 {currentDrafts.map((draft, di) => {
+                  const invalidCat = !draft.categoryId || draft.categoryId <= 0
                   const catIcon = categories.find(c => c.id === draft.categoryId)?.icon ?? (draft.type === 'income' ? '💰' : '💸')
                   return (
                     <div
                       key={draft.id}
-                      className="flex items-center gap-2.5 bg-white rounded-xl p-3 shadow-sm border border-gray-100 mb-2 hover:border-blue-200 transition-colors"
+                      className={`flex items-center gap-2.5 bg-white rounded-xl p-3 shadow-sm mb-2 transition-colors ${invalidCat ? 'border-2 border-red-300 hover:border-red-400' : 'border border-gray-100 hover:border-blue-200'}`}
                     >
                       <span className="text-xl flex-shrink-0">{catIcon}</span>
                       <div className="flex-1 min-w-0">
                         <div className="flex items-center justify-between">
                           <div className="min-w-0">
-                            <span className="text-sm font-medium text-gray-800 truncate">
+                            <span className={`text-sm font-medium truncate ${invalidCat ? 'text-red-600' : 'text-gray-800'}`}>
                               {draft.categoryName || '未分类'}
+                              {invalidCat && <span className="ml-1 text-red-400 text-xs">⚠ 需选择分类</span>}
                             </span>
                             {draft.merchantName && (
                               <span className="text-xs ml-1 text-gray-500">· {draft.merchantName}</span>
@@ -1771,17 +1784,22 @@ export default function TransactionForm({ open, onClose, onSuccess, initialData,
         </div>
         {/* 草稿列表 */}
         <div className="flex-1 overflow-y-auto px-4 py-3 space-y-2">
-          {currentDrafts.map((d, i) => (
-            <div key={d.id} className="flex items-start gap-3 bg-gray-50 rounded-xl p-3">
+          {currentDrafts.map((d, i) => {
+            const invalidCat = !d.categoryId || d.categoryId <= 0
+            return (
+            <div key={d.id} className={`flex items-start gap-3 rounded-xl p-3 ${invalidCat ? 'bg-red-50 border border-red-300' : 'bg-gray-50'}`}>
               <div className="flex-1 min-w-0 space-y-0.5">
                 <div className="flex items-center gap-2">
                   <span className={`text-base font-bold ${d.type === 'income' ? 'text-green-600' : 'text-red-600'}`}>
                     {d.type === 'income' ? '+' : '-'}¥{d.amount.toFixed(2)}
                   </span>
-                  <span className="text-xs text-gray-500 bg-white px-2 py-0.5 rounded-full border border-gray-200">
-                    {categories.find(c => c.id === d.categoryId)?.icon ?? ''} {d.categoryName}
+                  <span className={`text-xs px-2 py-0.5 rounded-full border ${invalidCat ? 'bg-red-100 text-red-600 border-red-300' : 'text-gray-500 bg-white border-gray-200'}`}>
+                    {categories.find(c => c.id === d.categoryId)?.icon ?? ''} {d.categoryName || '未分类'}
                   </span>
                 </div>
+                {invalidCat && (
+                  <p className="text-xs text-red-500 font-medium">⚠ 需要选择有效分类</p>
+                )}
                 {(d.merchantName || d.note) && (
                   <p className="text-xs text-gray-400 truncate">
                     {[d.merchantName, d.note].filter(Boolean).join(' · ')}
@@ -1789,13 +1807,21 @@ export default function TransactionForm({ open, onClose, onSuccess, initialData,
                 )}
                 <p className="text-xs text-gray-300">{d.date.slice(0, 16).replace('T', ' ')}</p>
               </div>
-              <button
-                type="button"
-                onClick={() => removeDraft(i)}
-                className="flex-shrink-0 w-7 h-7 flex items-center justify-center rounded-full text-gray-300 hover:text-red-500 hover:bg-red-50 transition-colors text-base"
-              >✕</button>
+              <div className="flex items-center gap-1 flex-shrink-0">
+                <button
+                  type="button"
+                  onClick={() => openEditDraft(i)}
+                  className="w-7 h-7 flex items-center justify-center rounded-full text-blue-500 hover:bg-blue-50 transition-colors text-sm"
+                  title="编辑"
+                >✎</button>
+                <button
+                  type="button"
+                  onClick={() => removeDraft(i)}
+                  className="w-7 h-7 flex items-center justify-center rounded-full text-gray-300 hover:text-red-500 hover:bg-red-50 transition-colors text-base"
+                >✕</button>
+              </div>
             </div>
-          ))}
+          )})}
         </div>
         {/* 总计 + 按钮 */}
         <div className="flex-shrink-0 border-t border-gray-100 px-4 py-4 space-y-3">
@@ -1806,6 +1832,9 @@ export default function TransactionForm({ open, onClose, onSuccess, initialData,
               ¥{Math.abs(currentDrafts.reduce((s, d) => s + (d.type === 'expense' ? -d.amount : d.amount), 0)).toFixed(2)}
             </span>
           </div>
+          {currentDrafts.some(d => !d.categoryId || d.categoryId <= 0) && (
+            <p className="text-xs text-red-500 text-center -mb-1">⚠ 存在未匹配有效分类的记录，请编辑后再提交</p>
+          )}
           <div className="flex gap-3">
             <button
               type="button"
@@ -1817,10 +1846,14 @@ export default function TransactionForm({ open, onClose, onSuccess, initialData,
             <button
               type="button"
               onClick={() => { setShowReview(false); handleBatchSave() }}
-              disabled={saving || currentDrafts.length === 0}
-              className="flex-1 py-3 text-sm font-semibold bg-blue-600 hover:bg-blue-700 disabled:bg-blue-300 text-white rounded-xl transition-colors"
+              disabled={saving || currentDrafts.length === 0 || currentDrafts.some(d => !d.categoryId || d.categoryId <= 0)}
+              className={`flex-1 py-3 text-sm font-semibold rounded-xl transition-colors text-white ${
+                currentDrafts.some(d => !d.categoryId || d.categoryId <= 0)
+                  ? 'bg-red-400 cursor-not-allowed'
+                  : 'bg-blue-600 hover:bg-blue-700 disabled:bg-blue-300'
+              }`}
             >
-              {saving ? '提交中…' : `确认提交 ${currentDrafts.length} 笔`}
+              {saving ? '提交中…' : currentDrafts.some(d => !d.categoryId || d.categoryId <= 0) ? '请先修正分类' : `确认提交 ${currentDrafts.length} 笔`}
             </button>
           </div>
         </div>
@@ -1968,22 +2001,25 @@ export default function TransactionForm({ open, onClose, onSuccess, initialData,
                 </tr>
               </thead>
               <tbody>
-                {currentDrafts.map(d => (
-                  <tr key={d.id} className="border-b border-gray-50">
+                {currentDrafts.map(d => {
+                    const invalidCat = !d.categoryId || d.categoryId <= 0
+                    return (
+                  <tr key={d.id} className={`border-b border-gray-50 ${invalidCat ? 'bg-red-50' : ''}`}>
                     <td className={`py-2 pr-4 text-xs font-medium whitespace-nowrap ${d.type === 'income' ? 'text-green-600' : 'text-red-600'}`}>
                       {d.type === 'income' ? '收入' : '支出'}
                     </td>
                     <td className={`py-2 pr-4 text-right text-sm font-bold whitespace-nowrap ${d.type === 'income' ? 'text-green-600' : 'text-red-600'}`}>
                       {d.type === 'income' ? '+' : '-'}¥{d.amount.toFixed(2)}
                     </td>
-                    <td className="py-2 pr-4 text-xs text-gray-700 whitespace-nowrap">
-                      {categories.find(c => c.id === d.categoryId)?.icon ?? ''} {d.categoryName}
+                    <td className={`py-2 pr-4 text-xs whitespace-nowrap ${invalidCat ? 'text-red-600 font-medium' : 'text-gray-700'}`}>
+                      {categories.find(c => c.id === d.categoryId)?.icon ?? ''} {d.categoryName || '未分类'}
+                      {invalidCat && <span className="ml-1 text-red-400">⚠ 需选择分类</span>}
                     </td>
                     <td className="py-2 pr-4 text-xs text-gray-600 whitespace-nowrap">{d.merchantName || '-'}</td>
                     <td className="py-2 pr-4 text-xs text-gray-500 whitespace-nowrap">{d.date.replace('T', ' ')}</td>
                     <td className="py-2 text-xs text-gray-500 whitespace-nowrap">{d.note || '-'}</td>
                   </tr>
-                ))}
+                  )})}
               </tbody>
             </table>
           </div>
@@ -1994,9 +2030,13 @@ export default function TransactionForm({ open, onClose, onSuccess, initialData,
             返回修改
           </button>
           <button type="button" onClick={() => { setShowReview(false); handleBatchSave() }}
-            disabled={saving}
-            className="flex-1 py-2.5 text-sm font-semibold bg-blue-600 hover:bg-blue-700 disabled:bg-blue-300 text-white rounded-xl transition-colors">
-            {saving ? '提交中…' : `确认提交 ${currentDrafts.length} 笔`}
+            disabled={saving || currentDrafts.some(d => !d.categoryId || d.categoryId <= 0)}
+            className={`flex-1 py-2.5 text-sm font-semibold rounded-xl transition-colors text-white ${
+              currentDrafts.some(d => !d.categoryId || d.categoryId <= 0)
+                ? 'bg-red-400 cursor-not-allowed'
+                : 'bg-blue-600 hover:bg-blue-700 disabled:bg-blue-300'
+            }`}>
+            {saving ? '提交中…' : currentDrafts.some(d => !d.categoryId || d.categoryId <= 0) ? '请先修正分类' : `确认提交 ${currentDrafts.length} 笔`}
           </button>
         </div>
       </div>

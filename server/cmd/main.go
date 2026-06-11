@@ -155,7 +155,7 @@ func main() {
 	llmHandler := handler.NewLLMHandler(llmSvcI, categorySvc, ocrRecordRepo)
 	statisticsHandler := handler.NewStatisticsHandler(statisticsSvc)
 	exporter := excel.NewExporter()
-	exportHandler := handler.NewExportHandler(transactionSvc, exporter, categoryRepo, transactionRepo)
+	exportHandler := handler.NewExportHandler(transactionSvc, exporter, categoryRepo, transactionRepo, tenantRepo)
 	rbacHandler := handler.NewRBACHandler(rbacSvc)
 	platformAdminSvc := service.NewPlatformAdminService(platformAdminRepo, platformStatsRepo, userRepo, platformConfigRepo, cfg)
 	platformAdminHandler := handler.NewPlatformAdminHandler(platformAdminSvc)

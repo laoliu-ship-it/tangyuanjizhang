@@ -47,8 +47,8 @@ func (e *Exporter) ExportTransactions(items []*dto.TransactionResp) ([]byte, err
 		headerStyle = 0
 	}
 
-	// 写入表头（与导入模板列顺序一致：日期、类型、金额、分类、商户、备注）
-	headers := []string{"日期", "类型", "金额", "分类", "商户", "备注"}
+	// 写入表头（与导入模板列顺序一致：交易时间、类型、金额、分类、商户、备注）
+	headers := []string{"交易时间", "类型", "金额", "分类", "商户", "备注"}
 	cols := []string{"A", "B", "C", "D", "E", "F"}
 	for i, h := range headers {
 		cell := cols[i] + "1"
@@ -113,8 +113,8 @@ func GenerateTemplate() ([]byte, error) {
 	sheet := "导入模板"
 	f.SetSheetName("Sheet1", sheet)
 
-	// 表头（第1行）：日期、类型、金额、分类、商户、备注
-	headers := []string{"日期", "类型", "金额", "分类", "商户", "备注"}
+	// 表头（第1行）：交易时间、类型、金额、分类、商户、备注
+	headers := []string{"交易时间", "类型", "金额", "分类", "商户", "备注"}
 	cols := []string{"A", "B", "C", "D", "E", "F"}
 	for i, h := range headers {
 		f.SetCellValue(sheet, cols[i]+"1", h)

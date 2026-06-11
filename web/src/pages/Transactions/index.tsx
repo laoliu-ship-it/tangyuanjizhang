@@ -183,9 +183,20 @@ export default function Transactions() {
       const url = URL.createObjectURL(blob)
       const a = document.createElement('a')
       a.href = url
-      const startLabel = filterStartDate || '开始'
-      const endLabel = filterEndDate || '结束'
-      a.download = `交易记录_${startLabel}_${endLabel}.xlsx`
+      // 获取租户名称
+      const tenants = useTenantStore.getState().tenants
+      const currentTenant = tenants.find(t => t.id === tenantId)
+      const tenantName = currentTenant?.name ?? '账本'
+      // 北京时间（UTC+8）
+      const now = new Date()
+      const utcTime = now.getTime() + now.getTimezoneOffset() * 60 * 1000
+      const beijingTime = new Date(utcTime + 8 * 60 * 60 * 1000)
+      const year = beijingTime.getFullYear()
+      const month = String(beijingTime.getMonth() + 1).padStart(2, '0')
+      const day = String(beijingTime.getDate()).padStart(2, '0')
+      const hours = String(beijingTime.getHours()).padStart(2, '0')
+      const minutes = String(beijingTime.getMinutes()).padStart(2, '0')
+      a.download = `${tenantName}的账本${year}-${month}-${day} ${hours}:${minutes}.xlsx`
       a.click()
       URL.revokeObjectURL(url)
     } catch (e: any) {
