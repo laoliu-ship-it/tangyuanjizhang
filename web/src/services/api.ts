@@ -250,6 +250,12 @@ export interface TenantLLMConfig {
   mode: 'vision' | 'ocr_text'
 }
 
+export interface TenantPrompt {
+  custom_prompt: string // 为空表示使用平台默认提示词
+  default_prompt: string // 平台默认提示词模板（含分类列表占位符）
+  placeholder: string // 分类列表占位符，如 {{分类列表}}
+}
+
 export interface TransactionListResponse {
   total: number
   items: Transaction[]
@@ -376,6 +382,9 @@ export const llmApi = {
     model?: string
     mode?: 'vision' | 'ocr_text'
   }) => api.put<ApiResponse<TenantLLMConfig>>('/llm/config', data),
+  getPrompt: () => api.get<ApiResponse<TenantPrompt>>('/llm/prompt'),
+  savePrompt: (data: { custom_prompt: string }) =>
+    api.put<ApiResponse<TenantPrompt>>('/llm/prompt', data),
   analyze: (data: LLMAnalyzeRequest) =>
     api.post<ApiResponse<LLMAnalyzeResponse>>('/llm/analyze', data),
   analyzeByOcrId: (data: LLMAnalyzeByOcrIdRequest) =>

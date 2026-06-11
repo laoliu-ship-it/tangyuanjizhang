@@ -291,6 +291,18 @@ type SaveTenantLLMConfigReq struct {
 	Mode        string `json:"mode" binding:"omitempty,oneof=vision ocr_text"`
 }
 
+// TenantPromptResp 租户识别提示词配置
+type TenantPromptResp struct {
+	CustomPrompt  string `json:"custom_prompt"`  // 为空表示使用平台默认提示词
+	DefaultPrompt string `json:"default_prompt"` // 平台默认提示词模板（含分类列表占位符，供前端编辑底稿）
+	Placeholder   string `json:"placeholder"`    // 分类列表占位符，如 {{分类列表}}
+}
+
+// SaveTenantPromptReq 保存租户识别提示词请求，custom_prompt 传空串表示恢复平台默认
+type SaveTenantPromptReq struct {
+	CustomPrompt string `json:"custom_prompt"`
+}
+
 // LLMAnalyzeReq 单独调用 LLM 分析的请求（只接受 ocr_id，服务端从 ocr_records 取内容）
 type LLMAnalyzeReq struct {
 	OcrID uint64 `json:"ocr_id" binding:"required"`

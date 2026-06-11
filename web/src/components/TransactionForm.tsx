@@ -354,7 +354,7 @@ export default function TransactionForm({ open, onClose, onSuccess, initialData,
                 const catId = llm.category_id ?? 0
                 const catName = catId
                   ? (categories.find(c => c.id === catId)?.name ?? llm.category_hint ?? '')
-                  : (llm.category_hint ? `⚠ 未匹配-${llm.category_hint}` : '未分类')
+                  : '未匹配'
                 let formattedDate: string
                 if (llm.date) {
                   const hasTime = /\d{2}:\d{2}$/.test(llm.date.trim())
@@ -429,7 +429,7 @@ export default function TransactionForm({ open, onClose, onSuccess, initialData,
             const catId = llm.category_id ?? 0
             const catName = catId
               ? (categories.find(c => c.id === catId)?.name ?? llm.category_hint ?? '')
-              : (llm.category_hint ? `⚠ 未匹配-${llm.category_hint}` : '未分类')
+              : '未匹配'
             let formattedDate: string
             if (llm.date) {
               const hasTime = /\d{2}:\d{2}$/.test(llm.date.trim())
@@ -637,7 +637,7 @@ export default function TransactionForm({ open, onClose, onSuccess, initialData,
     }
     const resolvedCatName = patch.categoryId
       ? (categories.find(c => c.id === patch.categoryId)?.name ?? llm.category_hint ?? '')
-      : (llm.category_hint ? `⚠ 未匹配-${llm.category_hint}` : '未分类')
+      : '未匹配'
     patchForm(patch)
 
     // 标记 source_lines 对应的所有 OCR 词条为已使用（划线）
@@ -997,9 +997,12 @@ export default function TransactionForm({ open, onClose, onSuccess, initialData,
   const isRecognizing = isOcrRecognizing || isLlmRecognizing
   const filteredCats = categories.filter(c => c.type === form.type)
   const isEditMode = !!initialData
-  // 统一列表在 OCR 栏内，不再需要独立的草稿列
-  const modalWidth = 'max-w-5xl'
-  const colWidth = 'w-1/4'
+  // PC端布局：图片(flex) | OCR(18%) | 暂存(18%) | 表单(34%)
+  const modalWidth = isEditMode ? 'max-w-5xl' : 'max-w-7xl'
+  const ocrColWidth = 'w-[20%]'  // OCR 列宽度
+  const draftColWidth = 'w-[25%]'  // 暂存列宽度
+  const formColWidth = 'w-[27%]'  // 表单列固定34%
+  const imageColWidth = 'flex-1'  // 图片列占据剩余空间（约30%）
 
   // ── 缩略图条 ─────────────────────────────────────────────
   const ThumbnailStrip = !isEditMode && (
@@ -1089,7 +1092,7 @@ export default function TransactionForm({ open, onClose, onSuccess, initialData,
 
   // ── 图片栏 ────────────────────────────────────────────────
   const ImageCol = (
-    <div className={isMobile ? 'w-full' : `${isDetailMode ? 'w-1/2' : colWidth} flex-shrink-0 flex flex-col border-r border-gray-100 bg-gray-50`}>
+    <div className={isMobile ? 'w-full' : `${isDetailMode ? 'w-1/2' : imageColWidth} flex-shrink-0 flex flex-col border-r border-gray-100 bg-gray-50`}>
       {/* 主图区 */}
       <div
         className={isMobile ? 'relative w-full h-56 bg-gray-100 rounded-xl overflow-hidden' : 'relative flex-1 overflow-hidden'}
@@ -1201,9 +1204,33 @@ export default function TransactionForm({ open, onClose, onSuccess, initialData,
     </div>
   )
 
+  // ── 复制 OCR 全部识别内容（词条块之间用空格分隔）──────────
+  function copyOcrText() {
+    const text = (ocrResult?.raw_texts ?? [])
+      .flatMap(line => line.split(/\s+/).filter(Boolean))
+      .join(' ')
+    if (!text) return
+    const onOk = () => { setToast({ text: '✓ 已复制识别内容' }); setTimeout(() => setToast(null), 2000) }
+    const onFail = () => { setToast({ text: '复制失败', error: true }); setTimeout(() => setToast(null), 2000) }
+    if (navigator.clipboard?.writeText) {
+      navigator.clipboard.writeText(text).then(onOk).catch(onFail)
+    } else {
+      // 非 HTTPS 环境降级方案
+      const ta = document.createElement('textarea')
+      ta.value = text
+      ta.style.position = 'fixed'
+      ta.style.opacity = '0'
+      document.body.appendChild(ta)
+      ta.select()
+      try { document.execCommand('copy') ? onOk() : onFail() }
+      catch { onFail() }
+      finally { document.body.removeChild(ta) }
+    }
+  }
+
   // ── OCR 结果栏 ────────────────────────────────────────────
   const OcrCol = (
-    <div className={isMobile ? 'w-full' : `${colWidth} flex-shrink-0 flex flex-col border-r border-gray-100 overflow-hidden`}>
+    <div className={isMobile ? 'w-full' : `${ocrColWidth} flex-shrink-0 flex flex-col border-r border-gray-100 overflow-hidden`}>
       {!isMobile && (
         <div className="px-4 pt-4 pb-2 flex-shrink-0 border-b border-gray-50 flex items-center justify-between gap-2">
           <div className="flex items-center gap-2">
@@ -1295,74 +1322,14 @@ export default function TransactionForm({ open, onClose, onSuccess, initialData,
                 </button>
               </div>
             )}
-            {/* ── 统一列表：AI 建议 + 已暂存草稿 ──────────────────── */}
-            {((ocrResult.llm && ocrResult.llm.length > 0) || currentDrafts.length > 0) && (
+            {/* ── AI 建议列表（暂存记录已移至独立暂存栏）─────────────────── */}
+            {ocrResult.llm && ocrResult.llm.length > 0 && (
               <div className="mb-3">
                 <div className="flex items-center justify-between px-1 mb-2">
-                  <span className="text-sm font-semibold text-gray-700">
-                    {currentDrafts.length > 0
-                      ? `已暂存 ${currentDrafts.length} 笔`
-                      : `AI 建议 · ${(ocrResult.llm ?? []).length} 笔`}
-                  </span>
-                  {currentDrafts.length > 0 && (
-                    <span className="text-xs text-gray-400">点击编辑或确认</span>
-                  )}
+                  <span className="text-sm font-semibold text-gray-700">AI 建议 · {(ocrResult.llm ?? []).length} 笔</span>
                 </div>
 
-                {/* 已暂存的草稿列表 */}
-                {currentDrafts.map((draft, di) => {
-                  const invalidCat = !draft.categoryId || draft.categoryId <= 0
-                  const catIcon = categories.find(c => c.id === draft.categoryId)?.icon ?? (draft.type === 'income' ? '💰' : '💸')
-                  return (
-                    <div
-                      key={draft.id}
-                      className={`flex items-center gap-2.5 bg-white rounded-xl p-3 shadow-sm mb-2 transition-colors ${invalidCat ? 'border-2 border-red-300 hover:border-red-400' : 'border border-gray-100 hover:border-blue-200'}`}
-                    >
-                      <span className="text-xl flex-shrink-0">{catIcon}</span>
-                      <div className="flex-1 min-w-0">
-                        <div className="flex items-center justify-between">
-                          <div className="min-w-0">
-                            <span className={`text-sm font-medium truncate ${invalidCat ? 'text-red-600' : 'text-gray-800'}`}>
-                              {draft.categoryName || '未分类'}
-                              {invalidCat && <span className="ml-1 text-red-400 text-xs">⚠ 需选择分类</span>}
-                            </span>
-                            {draft.merchantName && (
-                              <span className="text-xs ml-1 text-gray-500">· {draft.merchantName}</span>
-                            )}
-                          </div>
-                          <span className={`text-sm font-bold ml-2 flex-shrink-0 ${draft.type === 'income' ? 'text-green-600' : 'text-red-600'}`}>
-                            {draft.type === 'income' ? '+' : '-'}¥{draft.amount.toFixed(2)}
-                          </span>
-                        </div>
-                        <div className="flex items-center justify-between mt-0.5">
-                          <span className="text-xs text-gray-400">
-                            {draft.date.slice(0, 16).replace('T', ' ')}
-                            {draft.note && ` · ${draft.note}`}
-                          </span>
-                          <div className="flex items-center gap-1 flex-shrink-0">
-                            <button
-                              type="button"
-                              onClick={() => openEditDraft(di)}
-                              className="text-xs px-2 py-1 rounded-lg bg-blue-50 text-blue-600 hover:bg-blue-100 transition-colors"
-                            >
-                              编辑
-                            </button>
-                            <button
-                              type="button"
-                              onClick={() => removeDraft(di)}
-                              className="text-xs px-2 py-1 rounded-lg bg-gray-50 text-gray-500 hover:bg-red-50 hover:text-red-500 transition-colors"
-                            >
-                              删除
-                            </button>
-                          </div>
-                        </div>
-                      </div>
-                    </div>
-                  )
-                })}
-
-                {/* 尚未接受的 AI 建议（仅当有 LLM 建议且存在未填入的条目时显示） */}
-                {ocrResult.llm && ocrResult.llm.map((llm, i) => {
+                {ocrResult.llm.map((llm, i) => {
                   const filled = filledLlmIndices.has(i)
                   if (filled) return null  // 已接受的不再重复显示
                   const cat = categories.find(c => c.id === llm.category_id)
@@ -1411,9 +1378,18 @@ export default function TransactionForm({ open, onClose, onSuccess, initialData,
             )}
             {(ocrResult.raw_texts ?? []).length > 0 && (
               <div className="flex-1 flex flex-col min-h-0">
-                <p className="text-xs text-gray-300 mb-1 flex-shrink-0">
-                  {isMobile ? '点击词条选择填入字段' : '左键选中数字入算式 · 右键填入字段'}
-                </p>
+                <div className="flex items-center justify-between mb-1 flex-shrink-0">
+                  <p className="text-xs text-gray-300">
+                    {isMobile ? '点击词条选择填入字段' : '左键选中数字入算式 · 右键填入字段'}
+                  </p>
+                  <button
+                    type="button"
+                    onClick={copyOcrText}
+                    className="text-xs text-blue-500 hover:text-blue-600 transition-colors flex-shrink-0 px-1"
+                  >
+                    📋 复制
+                  </button>
+                </div>
                 <div className={isMobile ? 'bg-gray-50 rounded-xl p-3 max-h-48 overflow-y-auto space-y-1.5' : 'flex-1 overflow-y-auto space-y-1.5'}>
                   {(ocrResult.raw_texts ?? []).map((line, i) => (
                     <div key={i} className="flex flex-wrap gap-1">
@@ -1508,6 +1484,77 @@ export default function TransactionForm({ open, onClose, onSuccess, initialData,
     </div>
   )
 
+  // ── 暂存栏（PC 独立一列）──────────────────────────────────────
+  const DraftCol = !isEditMode && (
+    <div className={`${draftColWidth} flex-shrink-0 flex flex-col border-r border-gray-100 overflow-hidden`}>
+      {!isMobile && (
+        <div className="px-4 pt-4 pb-2 flex-shrink-0 border-b border-gray-50 flex items-center justify-between">
+          <span className="text-sm font-medium text-gray-700">
+            暂存记录 {currentDrafts.length > 0 ? `(${currentDrafts.length})` : ''}
+          </span>
+          {currentDrafts.length > 0 && (
+            <span className="text-xs text-gray-400">点击编辑</span>
+          )}
+        </div>
+      )}
+      <div className="flex-1 overflow-y-auto p-4">
+        {currentDrafts.length === 0 && (
+          <div className="h-full flex items-center justify-center">
+            <p className="text-xs text-gray-300 text-center">暂无记录</p>
+          </div>
+        )}
+        {currentDrafts.length > 0 && (
+          <div className="space-y-2">
+            {currentDrafts.map((draft, di) => {
+              const invalidCat = !draft.categoryId || draft.categoryId <= 0
+              const catIcon = categories.find(c => c.id === draft.categoryId)?.icon ?? (draft.type === 'income' ? '💰' : '💸')
+              return (
+                <div
+                  key={draft.id}
+                  className={`flex items-center gap-2 bg-gray-50 rounded-xl p-2.5 ${invalidCat ? 'border-2 border-red-300' : 'border border-gray-200'}`}
+                >
+                  <span className="text-lg flex-shrink-0">{catIcon}</span>
+                  <div className="flex-1 min-w-0">
+                    <div className="flex items-center justify-between">
+                      <span className={`text-xs font-medium truncate ${invalidCat ? 'text-red-600' : 'text-gray-700'}`}>
+                        {draft.categoryName || '未分类'}
+                      </span>
+                      <span className={`text-xs font-bold ml-1 flex-shrink-0 ${draft.type === 'income' ? 'text-green-600' : 'text-red-600'}`}>
+                        {draft.type === 'income' ? '+' : '-'}¥{draft.amount.toFixed(2)}
+                      </span>
+                    </div>
+                    <div className="flex items-center justify-between mt-0.5">
+                      <span className="text-xs text-gray-400 truncate">
+                        {draft.date.slice(0, 10)}
+                        {draft.merchantName && ` · ${draft.merchantName}`}
+                      </span>
+                      <div className="flex items-center gap-1 flex-shrink-0">
+                        <button
+                          type="button"
+                          onClick={() => openEditDraft(di)}
+                          className="text-xs text-blue-500 hover:text-blue-600"
+                        >
+                          编辑
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => removeDraft(di)}
+                          className="text-xs text-gray-400 hover:text-red-500"
+                        >
+                          删除
+                        </button>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              )
+            })}
+          </div>
+        )}
+      </div>
+    </div>
+  )
+
   // ── 分类字段（手机端移到备注之后，PC 保持金额之后）────────────
   const categoryFieldJsx = (
     <div>
@@ -1538,7 +1585,7 @@ export default function TransactionForm({ open, onClose, onSuccess, initialData,
 
   // ── 表单栏 ────────────────────────────────────────────────
   const FormCol = (
-    <div className={isMobile ? 'w-full' : `${isDetailMode ? 'w-1/2' : 'flex-1'} flex flex-col overflow-hidden`}>
+    <div className={isMobile ? 'w-full' : `${isDetailMode ? 'w-1/2' : formColWidth} flex flex-col overflow-hidden`}>
       {isDetailMode ? (
         // ── 详情模式：只读展示 ───────────────────────────────
         <div className={isMobile ? 'space-y-3' : 'flex-1 overflow-y-auto p-4 space-y-3'}>
@@ -2013,7 +2060,6 @@ export default function TransactionForm({ open, onClose, onSuccess, initialData,
                     </td>
                     <td className={`py-2 pr-4 text-xs whitespace-nowrap ${invalidCat ? 'text-red-600 font-medium' : 'text-gray-700'}`}>
                       {categories.find(c => c.id === d.categoryId)?.icon ?? ''} {d.categoryName || '未分类'}
-                      {invalidCat && <span className="ml-1 text-red-400">⚠ 需选择分类</span>}
                     </td>
                     <td className="py-2 pr-4 text-xs text-gray-600 whitespace-nowrap">{d.merchantName || '-'}</td>
                     <td className="py-2 pr-4 text-xs text-gray-500 whitespace-nowrap">{d.date.replace('T', ' ')}</td>
@@ -2179,6 +2225,7 @@ export default function TransactionForm({ open, onClose, onSuccess, initialData,
           <div className="flex flex-1 overflow-hidden">
             {ImageCol}
             {OcrCol}
+            {DraftCol}
             {FormCol}
           </div>
         </div>

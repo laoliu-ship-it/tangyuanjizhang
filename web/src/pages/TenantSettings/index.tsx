@@ -2,12 +2,13 @@ import { useState, useEffect } from 'react'
 import Members from './Members'
 import Categories from './Categories'
 import LLMSettings from './LLMSettings'
+import PromptSettings from './PromptSettings'
 import Roles from './Roles'
 import GeneralSettings from './GeneralSettings'
 import { tenantApi } from '../../services/api'
 import { useTenantStore } from '../../store/tenant'
 
-type Tab = 'general' | 'members' | 'roles' | 'categories' | 'llm'
+type Tab = 'general' | 'members' | 'roles' | 'categories' | 'llm' | 'prompt'
 
 const SUFFIX = '的记账本'
 
@@ -72,6 +73,7 @@ const TABS: { key: Tab; label: string }[] = [
   { key: 'roles', label: '角色权限' },
   { key: 'categories', label: '分类管理' },
   { key: 'llm', label: 'AI 设置' },
+  { key: 'prompt', label: '提示词管理' },
 ]
 
 export default function TenantSettings() {
@@ -104,6 +106,7 @@ export default function TenantSettings() {
       {activeTab === 'roles' && <Roles />}
       {activeTab === 'categories' && <Categories />}
       {activeTab === 'llm' && <LLMSettings />}
+      {activeTab === 'prompt' && <PromptSettings />}
     </div>
   )
 }

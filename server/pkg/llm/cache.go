@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"fmt"
 	"io"
 	"os"
 	"sync"
@@ -38,6 +39,8 @@ type serviceLLM interface {
 	Analyze(ctx context.Context, tenantID uint64, imagePath string, rawTexts []string, categories []dto.CategoryItem) ([]*dto.LLMSuggestion, error)
 	GetConfig(ctx context.Context, tenantID uint64) (*dto.TenantLLMConfigResp, error)
 	SaveConfig(ctx context.Context, tenantID uint64, req dto.SaveTenantLLMConfigReq) (*dto.TenantLLMConfigResp, error)
+	GetPrompt(ctx context.Context, tenantID uint64) (*dto.TenantPromptResp, error)
+	SavePrompt(ctx context.Context, tenantID uint64, req dto.SaveTenantPromptReq) (*dto.TenantPromptResp, error)
 }
 
 // NewCachedLLMService 创建带缓存的 LLM 服务
@@ -90,7 +93,7 @@ func (c *CachedLLMService) Analyze(ctx context.Context, tenantID uint64, imagePa
 		return c.inner.Analyze(ctx, tenantID, imagePath, rawTexts, categories)
 	}
 
-	// 根据缓存类型生成 key
+	// 根据缓存类型生成 key（带 tenantID 前缀隔离：各租户分类、提示词不同，结果不可共享）
 	var key string
 	if c.cacheType == "text" && len(rawTexts) > 0 {
 		// 文本缓存：用 OCR 文本内容做 key
@@ -103,6 +106,7 @@ func (c *CachedLLMService) Analyze(ctx context.Context, tenantID uint64, imagePa
 		}
 		key = hash
 	}
+	key = fmt.Sprintf("%d:%s", tenantID, key)
 
 	// 查缓存
 	c.mu.Lock()
@@ -135,6 +139,20 @@ func (c *CachedLLMService) GetConfig(ctx context.Context, tenantID uint64) (*dto
 // SaveConfig 透传
 func (c *CachedLLMService) SaveConfig(ctx context.Context, tenantID uint64, req dto.SaveTenantLLMConfigReq) (*dto.TenantLLMConfigResp, error) {
 	return c.inner.SaveConfig(ctx, tenantID, req)
+}
+
+// GetPrompt 透传
+func (c *CachedLLMService) GetPrompt(ctx context.Context, tenantID uint64) (*dto.TenantPromptResp, error) {
+	return c.inner.GetPrompt(ctx, tenantID)
+}
+
+// SavePrompt 透传，并清空分析结果缓存（提示词变更后旧结果作废）
+func (c *CachedLLMService) SavePrompt(ctx context.Context, tenantID uint64, req dto.SaveTenantPromptReq) (*dto.TenantPromptResp, error) {
+	resp, err := c.inner.SavePrompt(ctx, tenantID, req)
+	if err == nil {
+		c.ClearCache()
+	}
+	return resp, err
 }
 
 // fileHash 计算文件内容的 SHA256

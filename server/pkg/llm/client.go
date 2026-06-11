@@ -86,9 +86,24 @@ func isRateLimitErr(err error) bool {
 
 // Client LLM 客户端，封装 langchaingo
 type Client struct {
-	model   llms.Model
-	mode    string        // "vision" | "ocr_text"
-	timeout time.Duration
+	model          llms.Model
+	mode           string // "vision" | "ocr_text"
+	timeout        time.Duration
+	promptTemplate string // 自定义提示词模板，空则使用 DefaultPromptTemplate
+}
+
+// SetPromptTemplate 设置租户自定义提示词模板（支持 {{分类列表}} 占位符），空串表示使用平台默认
+func (c *Client) SetPromptTemplate(tpl string) {
+	c.promptTemplate = tpl
+}
+
+// systemPrompt 渲染本客户端的 system prompt
+func (c *Client) systemPrompt(categories []dto.CategoryItem) string {
+	tpl := c.promptTemplate
+	if strings.TrimSpace(tpl) == "" {
+		tpl = DefaultPromptTemplate
+	}
+	return RenderSystemPrompt(tpl, categories)
 }
 
 // NewClient 根据 LLMConfig 创建客户端
@@ -146,7 +161,7 @@ func (c *Client) analyzeOCRText(ctx context.Context, rawTexts []string, categori
 	messages := []llms.MessageContent{
 		{
 			Role:  llms.ChatMessageTypeSystem,
-			Parts: []llms.ContentPart{llms.TextPart(BuildSystemPrompt(categories))},
+			Parts: []llms.ContentPart{llms.TextPart(c.systemPrompt(categories))},
 		},
 		{
 			Role:  llms.ChatMessageTypeHuman,
@@ -173,7 +188,7 @@ func (c *Client) analyzeVision(ctx context.Context, imagePath string, categories
 	messages := []llms.MessageContent{
 		{
 			Role:  llms.ChatMessageTypeSystem,
-			Parts: []llms.ContentPart{llms.TextPart(BuildSystemPrompt(categories))},
+			Parts: []llms.ContentPart{llms.TextPart(c.systemPrompt(categories))},
 		},
 		{
 			Role: llms.ChatMessageTypeHuman,

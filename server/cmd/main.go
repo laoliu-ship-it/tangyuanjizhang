@@ -240,6 +240,13 @@ func main() {
 		tenant.PUT("/llm/config",
 			middleware.Casbin(enforcerPool, "tenant", "write"),
 			llmHandler.SaveConfig)
+		// 识别提示词（admin 查看和修改）
+		tenant.GET("/llm/prompt",
+			middleware.Casbin(enforcerPool, "tenant", "read"),
+			llmHandler.GetPrompt)
+		tenant.PUT("/llm/prompt",
+			middleware.Casbin(enforcerPool, "tenant", "write"),
+			llmHandler.SavePrompt)
 		// LLM 单独分析（OCR 完成后调用）
 		tenant.POST("/llm/analyze",
 			middleware.Casbin(enforcerPool, "transaction", "write"),

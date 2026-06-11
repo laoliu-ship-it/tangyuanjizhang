@@ -3,6 +3,7 @@ package service
 import (
 	"context"
 	"fmt"
+	"strings"
 	"sync"
 
 	"fandianjizhang/server/config"
@@ -20,6 +21,10 @@ type LLMService interface {
 	GetConfig(ctx context.Context, tenantID uint64) (*dto.TenantLLMConfigResp, error)
 	// SaveConfig 保存租户 LLM 配置，自动使新配置生效
 	SaveConfig(ctx context.Context, tenantID uint64, req dto.SaveTenantLLMConfigReq) (*dto.TenantLLMConfigResp, error)
+	// GetPrompt 获取租户识别提示词配置（含平台默认模板供前端编辑）
+	GetPrompt(ctx context.Context, tenantID uint64) (*dto.TenantPromptResp, error)
+	// SavePrompt 保存租户自定义识别提示词，传空串恢复平台默认
+	SavePrompt(ctx context.Context, tenantID uint64, req dto.SaveTenantPromptReq) (*dto.TenantPromptResp, error)
 }
 
 type llmService struct {
@@ -122,6 +127,66 @@ func (s *llmService) SaveConfig(ctx context.Context, tenantID uint64, req dto.Sa
 	return toConfigResp(&cfg, platformEnabled), nil
 }
 
+// 自定义提示词长度上限（字符数），防止把超长文本塞进每次请求
+const maxCustomPromptLen = 20000
+
+func (s *llmService) GetPrompt(ctx context.Context, tenantID uint64) (*dto.TenantPromptResp, error) {
+	cfg, err := s.repo.GetByTenantID(ctx, tenantID)
+	if err != nil {
+		return nil, err
+	}
+	resp := &dto.TenantPromptResp{
+		DefaultPrompt: pkgllm.DefaultPromptTemplate,
+		Placeholder:   pkgllm.CategoriesPlaceholder,
+	}
+	if cfg != nil {
+		resp.CustomPrompt = cfg.CustomPrompt
+	}
+	return resp, nil
+}
+
+func (s *llmService) SavePrompt(ctx context.Context, tenantID uint64, req dto.SaveTenantPromptReq) (*dto.TenantPromptResp, error) {
+	prompt := strings.TrimSpace(req.CustomPrompt)
+	if len([]rune(prompt)) > maxCustomPromptLen {
+		return nil, fmt.Errorf("提示词过长，最多 %d 字", maxCustomPromptLen)
+	}
+	// 内容与平台默认一致时按"未自定义"处理，后续平台升级默认提示词可自动跟随
+	if prompt == strings.TrimSpace(pkgllm.DefaultPromptTemplate) {
+		prompt = ""
+	}
+
+	existing, err := s.repo.GetByTenantID(ctx, tenantID)
+	if err != nil {
+		return nil, err
+	}
+	var cfg model.TenantLLMConfig
+	if existing != nil {
+		cfg = *existing
+	} else {
+		cfg.TenantID = tenantID
+		cfg.UsePlatform = true
+		cfg.Provider = "openai"
+		cfg.Model = "gpt-4o"
+		cfg.Mode = "ocr_text"
+	}
+	cfg.CustomPrompt = prompt
+
+	if err := s.repo.Save(ctx, &cfg); err != nil {
+		return nil, err
+	}
+
+	// 提示词变更后删除客户端缓存，下次 Analyze 时带新提示词重建
+	s.mu.Lock()
+	delete(s.clients, tenantID)
+	s.mu.Unlock()
+
+	return &dto.TenantPromptResp{
+		CustomPrompt:  cfg.CustomPrompt,
+		DefaultPrompt: pkgllm.DefaultPromptTemplate,
+		Placeholder:   pkgllm.CategoriesPlaceholder,
+	}, nil
+}
+
 // getOrBuildClient 获取或构建租户的 LLM 客户端（带缓存）
 func (s *llmService) getOrBuildClient(ctx context.Context, tenantID uint64) (*pkgllm.Client, error) {
 	s.mu.RLock()
@@ -175,6 +240,8 @@ func (s *llmService) getOrBuildClient(ctx context.Context, tenantID uint64) (*pk
 		if err != nil {
 			return nil, fmt.Errorf("初始化 LLM 客户端失败: %w", err)
 		}
+		// 无论用平台还是自定义 key，租户自定义提示词均生效
+		client.SetPromptTemplate(tenantCfg.CustomPrompt)
 	}
 	// 缓存结果（nil 也缓存，避免重复查库）
 	s.mu.Lock()

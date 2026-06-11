@@ -144,8 +144,9 @@ type TenantLLMConfig struct {
 	Provider    string    `gorm:"size:50;default:'openai'" json:"provider"`
 	BaseURL     string    `gorm:"size:255;default:''" json:"base_url"`
 	APIKey      string    `gorm:"size:500;default:''" json:"-"` // 不直接返回给前端
-	Model       string    `gorm:"size:100;default:'gpt-4o'" json:"model"`
-	Mode        string    `gorm:"size:20;default:'ocr_text'" json:"mode"` // "vision" | "ocr_text"
+	Model        string    `gorm:"size:100;default:'gpt-4o'" json:"model"`
+	Mode         string    `gorm:"size:20;default:'ocr_text'" json:"mode"` // "vision" | "ocr_text"
+	CustomPrompt string    `gorm:"type:text" json:"-"`                     // 自定义识别提示词，空=使用平台默认
 	CreatedAt   time.Time `json:"created_at"`
 	UpdatedAt   time.Time `json:"updated_at"`
 }
@@ -170,7 +171,9 @@ func (MediaFile) TableName() string { return "media_files" }
 type TenantSettings struct {
 	ID                  uint64    `gorm:"primaryKey;autoIncrement" json:"id"`
 	TenantID            uint64    `gorm:"not null;uniqueIndex" json:"tenant_id"`
-	RequireExpenseImage bool      `gorm:"default:true" json:"require_expense_image"` // 支出记录是否必须上传图片
+	// 不加 gorm default 标签：带 default 的 bool 字段在 INSERT 时零值(false)会被 GORM 跳过，
+	// 导致首次保存"关闭"被 DB 默认值覆盖；默认值由 service 层 GetSettings 提供
+	RequireExpenseImage bool      `json:"require_expense_image"` // 支出记录是否必须上传图片
 	CreatedAt           time.Time `json:"created_at"`
 	UpdatedAt           time.Time `json:"updated_at"`
 }

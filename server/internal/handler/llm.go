@@ -56,6 +56,37 @@ func (h *LLMHandler) SaveConfig(c *gin.Context) {
 	c.JSON(http.StatusOK, dto.OK(resp))
 }
 
+// GetPrompt 获取租户识别提示词（含平台默认模板）
+// GET /api/llm/prompt
+func (h *LLMHandler) GetPrompt(c *gin.Context) {
+	tenantID := middleware.GetTenantID(c)
+	resp, err := h.llmSvc.GetPrompt(c.Request.Context(), tenantID)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, dto.Fail(500, "获取提示词失败: "+err.Error()))
+		return
+	}
+	c.JSON(http.StatusOK, dto.OK(resp))
+}
+
+// SavePrompt 保存租户自定义识别提示词，custom_prompt 传空恢复平台默认（管理员操作）
+// PUT /api/llm/prompt
+func (h *LLMHandler) SavePrompt(c *gin.Context) {
+	tenantID := middleware.GetTenantID(c)
+
+	var req dto.SaveTenantPromptReq
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, dto.Fail(400, "参数错误: "+err.Error()))
+		return
+	}
+
+	resp, err := h.llmSvc.SavePrompt(c.Request.Context(), tenantID, req)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, dto.Fail(500, "保存提示词失败: "+err.Error()))
+		return
+	}
+	c.JSON(http.StatusOK, dto.OK(resp))
+}
+
 // Analyze 通过 ocr_id 调用 LLM 分析（OCR 完成后调用）
 // POST /api/llm/analyze
 func (h *LLMHandler) Analyze(c *gin.Context) {

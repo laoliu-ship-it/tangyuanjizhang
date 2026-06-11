@@ -7,9 +7,15 @@ import (
 	"fandianjizhang/server/internal/dto"
 )
 
-// BuildSystemPrompt 根据分类列表动态生成 system prompt
-func BuildSystemPrompt(categories []dto.CategoryItem) string {
-	base := `你是一个专业的财务记账助手。根据票据信息，提取所有独立的交易记录，以 JSON 数组返回，不要有任何额外文字、解释或代码块标记。
+// CategoriesPlaceholder 提示词中的分类列表占位符，渲染时替换为租户的分类列表
+const CategoriesPlaceholder = "{{分类列表}}"
+
+// categoriesPlaceholderEN 英文别名，同样会被替换
+const categoriesPlaceholderEN = "{{categories}}"
+
+// DefaultPromptTemplate 平台默认识别提示词模板（含 {{分类列表}} 占位符），
+// 租户未自定义提示词时使用，也作为前端"提示词管理"页的编辑底稿。
+const DefaultPromptTemplate = `你是一个专业的财务记账助手。根据票据信息，提取所有独立的交易记录，以 JSON 数组返回，不要有任何额外文字、解释或代码块标记。
 
 【重要识别规则 - 基于真实票据数据】
 
@@ -71,7 +77,7 @@ func BuildSystemPrompt(categories []dto.CategoryItem) string {
 【字段说明】
 - type: "expense"（支出）或 "income"（收入）
 - amount: 数字，不带负号，不带货币符号，无法识别则为 0
-- merchant_name: 商户名称，无法识别则为 "" 
+- merchant_name: 商户名称，无法识别则为 ""
 - date: "YYYY-MM-DD HH:mm" 格式（包含日期和时间），无法识别则为 ""
 - category_id: 整数，从下方分类列表中选择最匹配的分类 ID，无法匹配则为 0
 - category_hint: 与 category_id 对应的分类名称，无法匹配则填写推测的中文消费类型
@@ -82,27 +88,49 @@ func BuildSystemPrompt(categories []dto.CategoryItem) string {
   * 备注/商品名所在的行
   * 付款时间所在的行
 
-若只有一笔交易，也以数组形式返回（包含一个元素）。`
+若只有一笔交易，也以数组形式返回（包含一个元素）。
 
-	if len(categories) > 0 {
-		var sb strings.Builder
-		sb.WriteString(base)
-		sb.WriteString("\n\n可用分类列表（请从中选择最合适的 category_id）：\n")
-		for _, c := range categories {
-			typeLabel := "支出"
-			if c.Type == "income" {
-				typeLabel = "收入"
-			}
-			sb.WriteString(fmt.Sprintf("- id=%d  名称=%s  类型=%s\n", c.ID, c.Name, typeLabel))
-		}
-		sb.WriteString("\n返回示例1（微信单个付款）：[{\"type\":\"expense\",\"amount\":32.00,\"merchant_name\":\"杭州连杭食品有限公司\",\"date\":\"2026-05-27 14:05\",\"category_id\":0,\"category_hint\":\"餐饮\",\"note\":\"大桶水\",\"source_lines\":[1,2,3,7]}]")
-		sb.WriteString("\n返回示例2（微信账单列表）：[{\"type\":\"expense\",\"amount\":50.00,\"merchant_name\":\"简单就好\",\"date\":\"2026-05-28 02:36\",\"category_id\":0,\"category_hint\":\"蔬菜水果\",\"note\":\"青菜\",\"source_lines\":[4,5,6]}]")
-		sb.WriteString("\n返回示例3（支付宝详情）：[{\"type\":\"expense\",\"amount\":20.00,\"merchant_name\":\"心人\",\"date\":\"2026-06-01 20:28\",\"category_id\":0,\"category_hint\":\"餐饮\",\"note\":\"收钱码收款\",\"source_lines\":[1,2,4,6]}]")
-		sb.WriteString("\n注意：source_lines 应包含商户名、金额、备注、付款时间所在的行号")
-		return sb.String()
+{{分类列表}}
+
+返回示例1（微信单个付款）：[{"type":"expense","amount":32.00,"merchant_name":"杭州连杭食品有限公司","date":"2026-05-27 14:05","category_id":0,"category_hint":"餐饮","note":"大桶水","source_lines":[1,2,3,7]}]
+返回示例2（微信账单列表）：[{"type":"expense","amount":50.00,"merchant_name":"简单就好","date":"2026-05-28 02:36","category_id":0,"category_hint":"蔬菜水果","note":"青菜","source_lines":[4,5,6]}]
+返回示例3（支付宝详情）：[{"type":"expense","amount":20.00,"merchant_name":"心人","date":"2026-06-01 20:28","category_id":0,"category_hint":"餐饮","note":"收钱码收款","source_lines":[1,2,4,6]}]
+注意：source_lines 应包含商户名、金额、备注、付款时间所在的行号`
+
+// FormatCategoryList 将分类列表格式化为提示词中的文本块，空列表返回 ""
+func FormatCategoryList(categories []dto.CategoryItem) string {
+	if len(categories) == 0 {
+		return ""
 	}
+	var sb strings.Builder
+	sb.WriteString("可用分类列表（请从中选择最合适的 category_id）：\n")
+	for _, c := range categories {
+		typeLabel := "支出"
+		if c.Type == "income" {
+			typeLabel = "收入"
+		}
+		fmt.Fprintf(&sb, "- id=%d  名称=%s  类型=%s\n", c.ID, c.Name, typeLabel)
+	}
+	return sb.String()
+}
 
-	return base + "\n返回示例1（微信单个付款）：[{\"type\":\"expense\",\"amount\":32.00,\"merchant_name\":\"杭州连杭食品有限公司\",\"date\":\"2026-05-27 14:05\",\"category_id\":0,\"category_hint\":\"餐饮\",\"note\":\"大桶水\",\"source_lines\":[1,2,3,7]}]\n返回示例2（微信账单列表）：[{\"type\":\"expense\",\"amount\":50.00,\"merchant_name\":\"简单就好\",\"date\":\"2026-05-28 02:36\",\"category_id\":0,\"category_hint\":\"蔬菜水果\",\"note\":\"青菜\",\"source_lines\":[4,5,6]}]\n返回示例3（支付宝详情）：[{\"type\":\"expense\",\"amount\":20.00,\"merchant_name\":\"心人\",\"date\":\"2026-06-01 20:28\",\"category_id\":0,\"category_hint\":\"餐饮\",\"note\":\"收钱码收款\",\"source_lines\":[1,2,4,6]}]\n注意：source_lines 应包含商户名、金额、备注、付款时间所在的行号"
+// RenderSystemPrompt 渲染提示词模板：将 {{分类列表}} / {{categories}} 占位符替换为
+// 实际分类列表；模板不含占位符且分类非空时，将分类列表追加到末尾，保证 AI 始终能拿到分类。
+func RenderSystemPrompt(tpl string, categories []dto.CategoryItem) string {
+	list := FormatCategoryList(categories)
+	if strings.Contains(tpl, CategoriesPlaceholder) || strings.Contains(tpl, categoriesPlaceholderEN) {
+		tpl = strings.ReplaceAll(tpl, CategoriesPlaceholder, list)
+		return strings.ReplaceAll(tpl, categoriesPlaceholderEN, list)
+	}
+	if list == "" {
+		return tpl
+	}
+	return tpl + "\n\n" + list
+}
+
+// BuildSystemPrompt 使用平台默认模板生成 system prompt
+func BuildSystemPrompt(categories []dto.CategoryItem) string {
+	return RenderSystemPrompt(DefaultPromptTemplate, categories)
 }
 
 func BuildOCRTextMessage(rawTexts []string) string {
