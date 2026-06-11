@@ -5,4 +5,5 @@ web/node_modules
 web/dist/
 dist-server
 .playwright-mcp
+dist/server
 .env.deploy
