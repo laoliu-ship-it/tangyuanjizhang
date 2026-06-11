@@ -21,6 +21,31 @@ func NewExporter() *Exporter {
 	return &Exporter{}
 }
 
+// formatTransactionDate 格式化交易时间，处理多种可能的日期格式
+func formatTransactionDate(dateStr string) string {
+	// 尝试多种日期格式解析
+	layouts := []string{
+		"2006-01-02 15:04:05",       // MySQL datetime 格式
+		"2006-01-02T15:04:05Z",      // RFC3339 UTC
+		"2006-01-02T15:04:05+08:00", // RFC3339 with timezone
+		"2006-01-02T15:04:05-08:00", // RFC3339 with timezone
+		"2006-01-02 15:04",          // 简短格式
+		"2006-01-02",                // 仅日期
+	}
+
+	for _, layout := range layouts {
+		if t, err := time.Parse(layout, dateStr); err == nil {
+			return t.Format("2006-01-02 15:04")
+		}
+	}
+
+	// 无法解析时，直接返回原始字符串（去掉秒部分）
+	if len(dateStr) >= 16 {
+		return dateStr[:16]
+	}
+	return dateStr
+}
+
 // ExportTransactions 将交易记录导出为 Excel 字节数据
 func (e *Exporter) ExportTransactions(items []*dto.TransactionResp) ([]byte, error) {
 	f := excelize.NewFile()
@@ -43,11 +68,10 @@ func (e *Exporter) ExportTransactions(items []*dto.TransactionResp) ([]byte, err
 		},
 	})
 	if err != nil {
-		// 如果样式创建失败，使用默认样式继续
 		headerStyle = 0
 	}
 
-	// 写入表头（与导入模板列顺序一致：交易时间、类型、金额、分类、商户、备注）
+	// 写入表头
 	headers := []string{"交易时间", "类型", "金额", "分类", "商户", "备注"}
 	cols := []string{"A", "B", "C", "D", "E", "F"}
 	for i, h := range headers {
@@ -60,12 +84,12 @@ func (e *Exporter) ExportTransactions(items []*dto.TransactionResp) ([]byte, err
 
 	// 设置列宽
 	colWidths := map[string]float64{
-		"A": 15, // 日期
-		"B": 10, // 类型
-		"C": 12, // 金额
-		"D": 15, // 分类
-		"E": 15, // 商户
-		"F": 30, // 备注
+		"A": 15,
+		"B": 10,
+		"C": 12,
+		"D": 15,
+		"E": 15,
+		"F": 30,
 	}
 	for col, width := range colWidths {
 		f.SetColWidth(sheet, col, col, width)
@@ -73,7 +97,7 @@ func (e *Exporter) ExportTransactions(items []*dto.TransactionResp) ([]byte, err
 
 	// 金额样式
 	amountStyle, _ := f.NewStyle(&excelize.Style{
-		NumFmt: 2, // 数字格式：0.00
+		NumFmt: 2,
 	})
 
 	// 写入数据行
@@ -89,7 +113,10 @@ func (e *Exporter) ExportTransactions(items []*dto.TransactionResp) ([]byte, err
 			typeCN = item.Type
 		}
 
-		f.SetCellValue(sheet, fmt.Sprintf("A%d", row), item.TransactionDate)
+		// 格式化交易时间
+		dateStr := formatTransactionDate(item.TransactionDate)
+
+		f.SetCellValue(sheet, fmt.Sprintf("A%d", row), dateStr)
 		f.SetCellValue(sheet, fmt.Sprintf("B%d", row), typeCN)
 		f.SetCellValue(sheet, fmt.Sprintf("C%d", row), item.Amount)
 		f.SetCellStyle(sheet, fmt.Sprintf("C%d", row), fmt.Sprintf("C%d", row), amountStyle)
@@ -113,7 +140,7 @@ func GenerateTemplate() ([]byte, error) {
 	sheet := "导入模板"
 	f.SetSheetName("Sheet1", sheet)
 
-	// 表头（第1行）：交易时间、类型、金额、分类、商户、备注
+	// 表头
 	headers := []string{"交易时间", "类型", "金额", "分类", "商户", "备注"}
 	cols := []string{"A", "B", "C", "D", "E", "F"}
 	for i, h := range headers {
@@ -121,7 +148,7 @@ func GenerateTemplate() ([]byte, error) {
 	}
 
 	// 第2行示例（支出）
-	f.SetCellValue(sheet, "A2", "2024-01-15")
+	f.SetCellValue(sheet, "A2", "2024-01-15 12:30")
 	f.SetCellValue(sheet, "B2", "支出")
 	f.SetCellValue(sheet, "C2", 128.50)
 	f.SetCellValue(sheet, "D2", "食材采购")
@@ -129,7 +156,7 @@ func GenerateTemplate() ([]byte, error) {
 	f.SetCellValue(sheet, "F2", "今日蔬菜")
 
 	// 第3行示例（收入）
-	f.SetCellValue(sheet, "A3", "2024-01-15")
+	f.SetCellValue(sheet, "A3", "2024-01-15 18:00")
 	f.SetCellValue(sheet, "B3", "收入")
 	f.SetCellValue(sheet, "C3", 3500.00)
 	f.SetCellValue(sheet, "D3", "堂食收入")
@@ -137,7 +164,7 @@ func GenerateTemplate() ([]byte, error) {
 	f.SetCellValue(sheet, "F3", "午市堂食")
 
 	// 第4行说明
-	f.SetCellValue(sheet, "A4", "说明：日期格式 YYYY-MM-DD，类型只填\"收入\"或\"支出\"")
+	f.SetCellValue(sheet, "A4", "说明：日期格式 YYYY-MM-DD HH:mm，类型只填\"收入\"或\"支出\"")
 
 	// 设置列宽
 	colWidths := map[string]float64{
@@ -180,9 +207,7 @@ type ParseHeadersResult struct {
 
 // parseAmount 解析金额字符串，兼容全角逗号小数点和千分位分隔符
 func parseAmount(s string) (float64, error) {
-	// 全角逗号 → 小数点（如 "16，75"）
 	s = strings.ReplaceAll(s, "，", ".")
-	// 若含 ASCII 逗号且不像千分位（逗号后不是恰好3位数字），视为小数点
 	if strings.Count(s, ",") == 1 {
 		parts := strings.SplitN(s, ",", 2)
 		if len(parts[1]) != 3 {
@@ -191,7 +216,6 @@ func parseAmount(s string) (float64, error) {
 			s = strings.ReplaceAll(s, ",", "")
 		}
 	} else {
-		// 多个 ASCII 逗号均视为千分位，直接去掉
 		s = strings.ReplaceAll(s, ",", "")
 	}
 	return strconv.ParseFloat(strings.TrimSpace(s), 64)
@@ -248,9 +272,7 @@ func suggestMapping(headers []string) ColumnMapping {
 	return m
 }
 
-// ParseHeaders 解析 xlsx 文件的表头和样本行，并自动推断列映射
 // bestSheetIndex 在多个 sheet 中自动选择表头匹配度最高的
-// 评分规则：date/type/amount/category 各占 3 分，merchant/note 各占 1 分
 func bestSheetIndex(f *excelize.File, sheets []string) int {
 	best, bestScore := 0, -1
 	for i, s := range sheets {
@@ -287,7 +309,6 @@ func bestSheetIndex(f *excelize.File, sheets []string) int {
 }
 
 // ParseHeaders 解析 xlsx 文件的 sheet 列表、表头和样本数据，自动推断列映射
-// sheetIndex=-1 时自动选择表头匹配度最高的 sheet
 func ParseHeaders(data []byte, sheetIndex int) (*ParseHeadersResult, error) {
 	if len(data) == 0 {
 		return nil, fmt.Errorf("文件内容为空")
@@ -318,7 +339,6 @@ func ParseHeaders(data []byte, sheetIndex int) (*ParseHeadersResult, error) {
 
 	headers := rows[0]
 
-	// 收集最多 3 条样本行（跳过"说明"行和空行）
 	var sampleRows [][]string
 	for i := 1; i < len(rows) && len(sampleRows) < 3; i++ {
 		row := rows[i]
@@ -352,16 +372,27 @@ func ParseHeaders(data []byte, sheetIndex int) (*ParseHeadersResult, error) {
 
 // ImportResult 导入/预检结果
 type ImportResult struct {
-	ValidCount   int      // 可导入行数
-	SkippedCount int      // 跳过行数
-	Issues       []string // 问题说明（含修复建议）
+	ValidCount   int
+	SkippedCount int
+	Issues       []string
+}
+
+// parseImportDate 解析导入的日期字符串，返回 YYYY-MM-DD HH:mm:ss 格式
+func parseImportDate(s string) (string, error) {
+	layouts := []string{
+		"2006-01-02 15:04:05",
+		"2006-01-02 15:04",
+		"2006-01-02",
+	}
+	for _, layout := range layouts {
+		if t, err := time.Parse(layout, s); err == nil {
+			return t.Format("2006-01-02 15:04:05"), nil
+		}
+	}
+	return "", fmt.Errorf("无法解析日期格式")
 }
 
 // ImportFromExcel 从 xlsx 数据中解析交易记录
-// mapping 指定各字段对应的列下标；若 mapping 为 nil，则自动从表头推断
-// sheetIndex=-1 时自动选最佳 sheet
-// dryRun=true 时只验证不返回 Transaction，用于预检
-// 返回：可导入的 Transaction 列表（dryRun=true 时为 nil）、ImportResult、error
 func ImportFromExcel(data []byte, tenantID uint64, userID uint64, categoryList []*model.Category, mapping *ColumnMapping, sheetIndex int, dryRun bool) ([]*model.Transaction, *ImportResult, error) {
 	if len(data) == 0 {
 		return nil, nil, fmt.Errorf("文件内容为空")
@@ -387,7 +418,6 @@ func ImportFromExcel(data []byte, tenantID uint64, userID uint64, categoryList [
 		return nil, nil, fmt.Errorf("读取工作表失败: %w", err)
 	}
 
-	// 若未提供列映射，从表头自动推断
 	if mapping == nil {
 		if len(rows) == 0 {
 			return nil, nil, fmt.Errorf("工作表为空")
@@ -396,7 +426,6 @@ func ImportFromExcel(data []byte, tenantID uint64, userID uint64, categoryList [
 		mapping = &suggested
 	}
 
-	// 检查必填字段是否已映射
 	if mapping.Date < 0 {
 		return nil, nil, fmt.Errorf("未找到【日期】列，请检查表头或手动指定列映射")
 	}
@@ -410,7 +439,6 @@ func ImportFromExcel(data []byte, tenantID uint64, userID uint64, categoryList [
 		return nil, nil, fmt.Errorf("未找到【分类】列，请检查表头或手动指定列映射")
 	}
 
-	// 构建分类名称 → Category 的映射
 	categoryMap := make(map[string]*model.Category, len(categoryList))
 	for _, cat := range categoryList {
 		if cat != nil {
@@ -425,7 +453,6 @@ func ImportFromExcel(data []byte, tenantID uint64, userID uint64, categoryList [
 		return strings.TrimSpace(row[idx])
 	}
 
-	// colName 返回列字母标识（0→A, 1→B, 25→Z, 26→AA …）
 	colName := func(idx int) string {
 		if idx < 0 {
 			return "?"
@@ -447,15 +474,13 @@ func ImportFromExcel(data []byte, tenantID uint64, userID uint64, categoryList [
 	for rowIdx, row := range rows {
 		lineNum := rowIdx + 1
 		if rowIdx == 0 {
-			continue // 跳过表头
+			continue
 		}
 
-		// 跳过说明行
 		if getCell(row, mapping.Date) != "" && strings.Contains(getCell(row, mapping.Date), "说明") {
 			continue
 		}
 
-		// 跳过完全空行
 		isEmpty := true
 		for _, cell := range row {
 			if strings.TrimSpace(cell) != "" {
@@ -474,23 +499,23 @@ func ImportFromExcel(data []byte, tenantID uint64, userID uint64, categoryList [
 		merchant := getCell(row, mapping.Merchant)
 		note := getCell(row, mapping.Note)
 
-		// 验证日期
+		// 验证并格式化日期
 		if dateStr == "" {
 			res.Issues = append(res.Issues, fmt.Sprintf(
-				"第%d行 %s列(日期)：单元格为空 → 请填写日期，格式 YYYY-MM-DD（如 2026-01-15）",
+				"第%d行 %s列(日期)：单元格为空 → 请填写日期，格式 YYYY-MM-DD HH:mm（如 2026-01-15 12:30）",
 				lineNum, colName(mapping.Date)))
 			res.SkippedCount++
 			continue
 		}
-		if _, err := time.Parse("2006-01-02", dateStr); err != nil {
+		formattedDate, err := parseImportDate(dateStr)
+		if err != nil {
 			res.Issues = append(res.Issues, fmt.Sprintf(
-				"第%d行 %s列(日期)：格式错误，当前值 %q → 请改为 YYYY-MM-DD 格式（如 2026-01-15）",
+				"第%d行 %s列(日期)：格式错误，当前值 %q → 请改为 YYYY-MM-DD HH:mm 格式（如 2026-01-15 12:30）",
 				lineNum, colName(mapping.Date), dateStr))
 			res.SkippedCount++
 			continue
 		}
 
-		// 解析类型
 		var txType string
 		switch typeStr {
 		case "收入":
@@ -505,7 +530,6 @@ func ImportFromExcel(data []byte, tenantID uint64, userID uint64, categoryList [
 			continue
 		}
 
-		// 解析金额（处理全角逗号小数点和千分位逗号）
 		if amountStr == "" {
 			res.Issues = append(res.Issues, fmt.Sprintf(
 				"第%d行 %s列(金额)：单元格为空 → 请填写金额数字（如 128.50）",
@@ -522,7 +546,6 @@ func ImportFromExcel(data []byte, tenantID uint64, userID uint64, categoryList [
 			continue
 		}
 
-		// 查找分类（精确匹配优先，再模糊匹配）
 		var categoryID uint64
 		if cat, ok := categoryMap[categoryName]; ok {
 			categoryID = cat.ID
@@ -551,7 +574,6 @@ func ImportFromExcel(data []byte, tenantID uint64, userID uint64, categoryList [
 
 		res.ValidCount++
 		if !dryRun {
-			// 拼接 Note：商户名前置
 			fullNote := note
 			if merchant != "" && note != "" {
 				fullNote = merchant + " - " + note
@@ -565,7 +587,7 @@ func ImportFromExcel(data []byte, tenantID uint64, userID uint64, categoryList [
 				Type:            txType,
 				Amount:          amount,
 				CategoryID:      categoryID,
-				TransactionDate: dateStr,
+				TransactionDate: formattedDate,
 				Note:            fullNote,
 			})
 		}

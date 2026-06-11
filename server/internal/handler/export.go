@@ -91,8 +91,8 @@ func (h *ExportHandler) Excel(c *gin.Context) {
 	// 使用北京时间生成文件名
 	beijingLoc, _ := time.LoadLocation("Asia/Shanghai")
 	nowBeijing := time.Now().In(beijingLoc)
-	timeStr := nowBeijing.Format("2006-01-02 15:04")
-	filename := fmt.Sprintf("%s的账本%s.xlsx", tenantName, timeStr)
+	timeStr := nowBeijing.Format("2006-01-02-15-04")
+	filename := fmt.Sprintf("%s-%s.xlsx", tenantName, timeStr)
 
 	c.Header("Content-Disposition", "attachment; filename*=UTF-8''"+url.QueryEscape(filename))
 	c.Header("Content-Type", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")

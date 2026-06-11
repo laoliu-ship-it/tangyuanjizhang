@@ -196,7 +196,7 @@ export default function Transactions() {
       const day = String(beijingTime.getDate()).padStart(2, '0')
       const hours = String(beijingTime.getHours()).padStart(2, '0')
       const minutes = String(beijingTime.getMinutes()).padStart(2, '0')
-      a.download = `${tenantName}的账本${year}-${month}-${day} ${hours}:${minutes}.xlsx`
+      a.download = `${tenantName}-${year}-${month}-${day}-${hours}-${minutes}.xlsx`
       a.click()
       URL.revokeObjectURL(url)
     } catch (e: any) {
