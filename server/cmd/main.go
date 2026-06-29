@@ -9,6 +9,7 @@ import (
 	"os"
 	"strings"
 	"time"
+	_ "time/tzdata"
 
 	"fandianjizhang/server/config"
 	"fandianjizhang/server/internal/casbin"
@@ -57,8 +58,15 @@ func main() {
 		&model.PlatformAdmin{},
 		&model.PlatformConfig{},
 		&model.StatsCache{},
+		&model.TenantCredits{},
+		&model.CreditLog{},
 	); err != nil {
 		log.Fatalf("数据库迁移失败: %v", err)
+	}
+
+	// 补全历史租户的 book_type（幂等，已填充后影响 0 行）
+	if err := db.Exec("UPDATE tenants SET book_type = 'restaurant' WHERE book_type IS NULL OR book_type = ''").Error; err != nil {
+		log.Printf("[migrate] 补全 book_type 失败: %v", err)
 	}
 
 	// 统计查询复合索引（兼容 MySQL 5.7，先查 information_schema 再建）
@@ -95,6 +103,33 @@ func main() {
 		}
 	}
 
+	// 如果静态 config 有 LLM APIKey，且 DB 中平台 LLM APIKey 还为空，则将静态配置同步到 DB
+	if cfg.LLM.APIKey != "" {
+		var existing model.PlatformConfig
+		if err := db.Where("config_key = ?", model.ConfigKeyPlatformLLMAPIKey).First(&existing).Error; err != nil || existing.ConfigValue == "" {
+			syncLLMConfigs := []struct{ key, val string }{
+				{model.ConfigKeyPlatformLLMEnabled, func() string {
+					if cfg.LLM.Enabled {
+						return "true"
+					}
+					return "false"
+				}()},
+				{model.ConfigKeyPlatformLLMProvider, cfg.LLM.Provider},
+				{model.ConfigKeyPlatformLLMBaseURL, cfg.LLM.BaseURL},
+				{model.ConfigKeyPlatformLLMAPIKey, cfg.LLM.APIKey},
+				{model.ConfigKeyPlatformLLMModel, cfg.LLM.Model},
+				{model.ConfigKeyPlatformLLMMode, cfg.LLM.Mode},
+			}
+			for _, kv := range syncLLMConfigs {
+				if kv.val == "" {
+					continue
+				}
+				db.Model(&model.PlatformConfig{}).Where("config_key = ?", kv.key).Update("config_value", kv.val)
+			}
+			log.Printf("[config] 静态 LLM 配置已同步到 platform_configs")
+		}
+	}
+
 	// 初始化 Casbin EnforcerPool（按租户从数据库加载权限）
 	enforcerPool, err := casbin.NewEnforcerPool(db)
 	if err != nil {
@@ -118,6 +153,7 @@ func main() {
 	platformStatsRepo := repo.NewPlatformStatsRepo(db)
 	platformConfigRepo := repo.NewPlatformConfigRepo(db)
 	statsCacheRepo := repo.NewStatsCacheRepo(db)
+	tenantCreditsRepo := repo.NewTenantCreditsRepo(db)
 
 	// 初始化 OCR 引擎（带可配置缓存）
 	ocrEngine, err := pkgocr.NewEngine(cfg, platformConfigRepo)
@@ -131,15 +167,18 @@ func main() {
 	// 初始化 RBAC Service
 	rbacSvc := service.NewRBACService(roleRepo, permRepo, enforcerPool)
 
+	// 初始化积分 Service
+	creditsSvc := service.NewCreditsService(tenantCreditsRepo, platformConfigRepo)
+
 	// 初始化 Service 层
-	authSvc := service.NewAuthService(userRepo, tenantRepo, tenantMemberRepo, categoryRepo, cfg)
+	authSvc := service.NewAuthService(userRepo, tenantRepo, tenantMemberRepo, categoryRepo, creditsSvc, platformConfigRepo, cfg)
 	tenantSvc := service.NewTenantService(tenantRepo, tenantMemberRepo, userRepo, categoryRepo, tenantSettingsRepo)
 	categorySvc := service.NewCategoryService(categoryRepo)
 	merchantSvc := service.NewMerchantService(merchantRepo)
 	transactionSvc := service.NewTransactionService(transactionRepo, categoryRepo, merchantRepo)
 	ocrSvc := service.NewOCRService(ocrEngine, cfg.OCR.AIMode)
 	statisticsSvc := service.NewStatisticsService(transactionRepo, statsCacheRepo, tenantRepo)
-	llmSvc := service.NewLLMService(cfg.LLM, llmConfigRepo)
+	llmSvc := service.NewLLMService(cfg.LLM, llmConfigRepo, platformConfigRepo)
 	// LLM 缓存：从平台配置读取缓存类型和 TTL
 	var llmSvcI service.LLMService = llmSvc
 	llmSvcI = pkgllm.NewCachedLLMService(llmSvcI, platformConfigRepo)
@@ -151,14 +190,15 @@ func main() {
 	categoryHandler := handler.NewCategoryHandler(categorySvc)
 	merchantHandler := handler.NewMerchantHandler(merchantSvc)
 	transactionHandler := handler.NewTransactionHandler(transactionSvc)
-	ocrHandler := handler.NewOCRHandler(ocrSvc, merchantSvc, categorySvc, llmSvcI, store, mediaRepo, ocrRecordRepo, cfg.Upload)
-	llmHandler := handler.NewLLMHandler(llmSvcI, categorySvc, ocrRecordRepo)
+	ocrHandler := handler.NewOCRHandler(ocrSvc, merchantSvc, categorySvc, llmSvcI, creditsSvc, store, mediaRepo, ocrRecordRepo, cfg.Upload)
+	llmHandler := handler.NewLLMHandler(llmSvcI, categorySvc, creditsSvc, ocrRecordRepo)
 	statisticsHandler := handler.NewStatisticsHandler(statisticsSvc)
 	exporter := excel.NewExporter()
 	exportHandler := handler.NewExportHandler(transactionSvc, exporter, categoryRepo, transactionRepo, tenantRepo)
 	rbacHandler := handler.NewRBACHandler(rbacSvc)
-	platformAdminSvc := service.NewPlatformAdminService(platformAdminRepo, platformStatsRepo, userRepo, platformConfigRepo, cfg)
-	platformAdminHandler := handler.NewPlatformAdminHandler(platformAdminSvc)
+	platformAdminSvc := service.NewPlatformAdminService(platformAdminRepo, platformStatsRepo, userRepo, platformConfigRepo, tenantRepo, creditsSvc, cfg)
+	platformAdminHandler := handler.NewPlatformAdminHandler(platformAdminSvc, llmSvcI)
+	creditsHandler := handler.NewCreditsHandler(creditsSvc)
 
 	// 初始化路由
 	r := gin.Default()
@@ -240,13 +280,6 @@ func main() {
 		tenant.PUT("/llm/config",
 			middleware.Casbin(enforcerPool, "tenant", "write"),
 			llmHandler.SaveConfig)
-		// 识别提示词（admin 查看和修改）
-		tenant.GET("/llm/prompt",
-			middleware.Casbin(enforcerPool, "tenant", "read"),
-			llmHandler.GetPrompt)
-		tenant.PUT("/llm/prompt",
-			middleware.Casbin(enforcerPool, "tenant", "write"),
-			llmHandler.SavePrompt)
 		// LLM 单独分析（OCR 完成后调用）
 		tenant.POST("/llm/analyze",
 			middleware.Casbin(enforcerPool, "transaction", "write"),
@@ -350,6 +383,10 @@ func main() {
 			middleware.Casbin(enforcerPool, "transaction", "write"),
 			exportHandler.ImportExcel)
 
+		// 积分查询（所有成员可查）
+		tenant.GET("/credits", creditsHandler.GetBalance)
+		tenant.GET("/credits/logs", creditsHandler.GetLogs)
+
 		// 分类读取（所有成员）
 		tenant.GET("/categories",
 			middleware.Casbin(enforcerPool, "category", "read"),
@@ -395,6 +432,16 @@ func main() {
 			// 配置管理
 			platformAuth.GET("/configs", platformAdminHandler.GetConfigs)
 			platformAuth.PUT("/configs/:key", platformAdminHandler.UpdateConfig)
+			// 积分管理
+			platformAuth.GET("/users/:id/tenants/credits", platformAdminHandler.ListUserTenantCredits)
+			platformAuth.GET("/tenants/:id/credits", platformAdminHandler.GetTenantCredits)
+			platformAuth.POST("/tenants/:id/credits/adjust", platformAdminHandler.AdjustTenantCredits)
+			platformAuth.PUT("/tenants/:id/credits/unlimited", platformAdminHandler.SetTenantUnlimited)
+			platformAuth.GET("/tenants/:id/prompt", platformAdminHandler.GetTenantPrompt)
+			platformAuth.PUT("/tenants/:id/prompt", platformAdminHandler.UpdateTenantPrompt)
+			// 平台 LLM 配置
+			platformAuth.GET("/llm-config", platformAdminHandler.GetPlatformLLMConfig)
+			platformAuth.PUT("/llm-config", platformAdminHandler.UpdatePlatformLLMConfig)
 		}
 	}
 

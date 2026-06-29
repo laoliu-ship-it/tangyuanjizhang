@@ -1,8 +1,11 @@
 package handler
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"io"
 	"log"
 	"net/http"
 	"path/filepath"
@@ -20,18 +23,19 @@ import (
 )
 
 type OCRHandler struct {
-	ocrSvc       service.OCRService
-	merchantSvc  service.MerchantService
-	categorySvc  service.CategoryService
-	llmSvc       service.LLMService
-	storage      storage.Storage
-	mediaRepo    repo.MediaFileRepo
+	ocrSvc        service.OCRService
+	merchantSvc   service.MerchantService
+	categorySvc   service.CategoryService
+	llmSvc        service.LLMService
+	creditsSvc    service.CreditsService
+	storage       storage.Storage
+	mediaRepo     repo.MediaFileRepo
 	ocrRecordRepo repo.OcrRecordRepo
-	uploadCfg    config.UploadConfig
+	uploadCfg     config.UploadConfig
 }
 
-func NewOCRHandler(ocrSvc service.OCRService, merchantSvc service.MerchantService, categorySvc service.CategoryService, llmSvc service.LLMService, store storage.Storage, mediaRepo repo.MediaFileRepo, ocrRecordRepo repo.OcrRecordRepo, uploadCfg config.UploadConfig) *OCRHandler {
-	return &OCRHandler{ocrSvc: ocrSvc, merchantSvc: merchantSvc, categorySvc: categorySvc, llmSvc: llmSvc, storage: store, mediaRepo: mediaRepo, ocrRecordRepo: ocrRecordRepo, uploadCfg: uploadCfg}
+func NewOCRHandler(ocrSvc service.OCRService, merchantSvc service.MerchantService, categorySvc service.CategoryService, llmSvc service.LLMService, creditsSvc service.CreditsService, store storage.Storage, mediaRepo repo.MediaFileRepo, ocrRecordRepo repo.OcrRecordRepo, uploadCfg config.UploadConfig) *OCRHandler {
+	return &OCRHandler{ocrSvc: ocrSvc, merchantSvc: merchantSvc, categorySvc: categorySvc, llmSvc: llmSvc, creditsSvc: creditsSvc, storage: store, mediaRepo: mediaRepo, ocrRecordRepo: ocrRecordRepo, uploadCfg: uploadCfg}
 }
 
 // Upload 上传图片并进行 OCR 识别
@@ -61,9 +65,20 @@ func (h *OCRHandler) Upload(c *gin.Context) {
 		return
 	}
 
+	// 优先用前端传的 hash；前端未传时服务端自己算，保证去重不依赖前端
 	originalHash := c.Request.FormValue("original_hash")
+	if originalHash == "" {
+		hasher := sha256.New()
+		if _, herr := io.Copy(hasher, file); herr == nil {
+			originalHash = hex.EncodeToString(hasher.Sum(nil))
+		}
+		if _, serr := file.Seek(0, io.SeekStart); serr != nil {
+			c.JSON(http.StatusInternalServerError, dto.Fail(500, "读取文件失败"))
+			return
+		}
+	}
 
-	// 去重检查：如果提供了 hash，先查是否已存在
+	// 去重检查：hash 命中 media_file，说明已上传过，不重复扣 upload+ocr
 	if originalHash != "" {
 		existing, err := h.mediaRepo.GetByHash(c.Request.Context(), tenantID, originalHash)
 		if err != nil {
@@ -71,15 +86,22 @@ func (h *OCRHandler) Upload(c *gin.Context) {
 		}
 		if existing != nil {
 			log.Printf("[OCR] tenant=%d duplicate file detected, hash=%s, file=%s", tenantID, originalHash, existing.FileName)
+			// 复用已有的 ocr_record.id，让前端可以继续调 LLM（只扣 LLM 费，不重复扣 upload+ocr）
+			var existingOcrID uint64
+			var existingRawTexts []string
+			if ocrRec, ocrErr := h.ocrRecordRepo.GetByHash(c.Request.Context(), tenantID, originalHash); ocrErr == nil && ocrRec != nil {
+				existingOcrID = ocrRec.ID
+				_ = json.Unmarshal([]byte(ocrRec.RawTexts), &existingRawTexts)
+			}
 			c.JSON(http.StatusOK, dto.OK(dto.OCRResponse{
-				OcrID:        0, // 重复文件不创建新记录
+				OcrID:        existingOcrID,
 				ImagePath:    "/" + existing.FilePath,
 				AIMode:       false,
 				Amount:       0,
 				Date:         "",
 				MerchantID:   0,
 				MerchantName: "",
-				RawTexts:     []string{},
+				RawTexts:     existingRawTexts,
 				Duplicate:    true,
 				FileName:     existing.FileName,
 			}))
@@ -147,6 +169,18 @@ func (h *OCRHandler) Upload(c *gin.Context) {
 	}
 	if err := h.ocrRecordRepo.Create(c.Request.Context(), ocrRec); err != nil {
 		log.Printf("[OCR] tenant=%d failed to create ocr_record: %v", tenantID, err)
+	}
+
+	// 扣费：新文件 = upload + ocr（重复文件走 early return，不到这里）
+	if deductErr := h.creditsSvc.CheckAndDeduct(c.Request.Context(), tenantID, "upload", "ocr_record", ocrRec.ID, "图片上传"); deductErr != nil {
+		log.Printf("[credits] tenant=%d upload deduct error: %v", tenantID, deductErr)
+		c.JSON(http.StatusOK, dto.Fail(402, "积分不足，请联系管理员充值"))
+		return
+	}
+	if deductErr := h.creditsSvc.CheckAndDeduct(c.Request.Context(), tenantID, "ocr", "ocr_record", ocrRec.ID, "OCR识别"); deductErr != nil {
+		log.Printf("[credits] tenant=%d ocr deduct error: %v", tenantID, deductErr)
+		c.JSON(http.StatusOK, dto.Fail(402, "积分不足，请联系管理员充值"))
+		return
 	}
 
 	c.JSON(http.StatusOK, dto.OK(dto.OCRResponse{
@@ -218,6 +252,12 @@ func (h *OCRHandler) Analyze(c *gin.Context) {
 				log.Printf("[LLM] tenant=%d analyze error: %v", tenantID, lerr)
 				llmErrMsg = friendlyLLMError(lerr)
 			} else {
+				// 重复文件：仅扣 LLM 费（upload+OCR 已在首次上传时扣过）
+				if deductErr := h.creditsSvc.CheckAndDeduct(c.Request.Context(), tenantID, "llm", "media_file", existing.ID, "AI整理(重复图片)"); deductErr != nil {
+					log.Printf("[credits] tenant=%d llm deduct error: %v", tenantID, deductErr)
+					c.JSON(http.StatusOK, dto.Fail(402, "积分不足，请联系管理员充值"))
+					return
+				}
 				llmSuggestions = suggestions
 			}
 
@@ -301,9 +341,21 @@ func (h *OCRHandler) Analyze(c *gin.Context) {
 
 	rawTexts := extractRawTextStrings(ocrResult.RawTexts)
 
+	// 新文件：OCR 成功后扣 upload + ocr（失败已在上方 return，不会到这里）
+	if deductErr := h.creditsSvc.CheckAndDeduct(c.Request.Context(), tenantID, "upload", "", 0, "图片上传"); deductErr != nil {
+		log.Printf("[credits] tenant=%d upload deduct error: %v", tenantID, deductErr)
+		c.JSON(http.StatusOK, dto.Fail(402, "积分不足，请联系管理员充值"))
+		return
+	}
+	if deductErr := h.creditsSvc.CheckAndDeduct(c.Request.Context(), tenantID, "ocr", "", 0, "OCR识别"); deductErr != nil {
+		log.Printf("[credits] tenant=%d ocr deduct error: %v", tenantID, deductErr)
+		c.JSON(http.StatusOK, dto.Fail(402, "积分不足，请联系管理员充值"))
+		return
+	}
+
 	// === LLM 分析 ===
 	llmStartTime := time.Now()
-	// LLM 分析（非致命，失败时记录错误继续返回 OCR 结果）
+	// LLM 分析（非致命，失败时记录错误继续返回 OCR 结果，LLM 失败不扣 LLM 积分）
 	var llmSuggestions []*dto.LLMSuggestion
 	var llmErrMsg string
 	if suggestions, lerr := h.llmSvc.Analyze(c.Request.Context(), tenantID, savedPath, rawTexts, categoryItems); lerr != nil {
@@ -317,6 +369,10 @@ func (h *OCRHandler) Analyze(c *gin.Context) {
 		for i, s := range suggestions {
 			log.Printf("[LLM] tenant=%d suggestion[%d]: type=%s amount=%.2f category_id=%d category_hint=%s merchant=%s date=%s",
 				tenantID, i, s.Type, s.Amount, s.CategoryID, s.CategoryHint, s.MerchantName, s.Date)
+		}
+		// LLM 成功后才扣 llm 积分
+		if deductErr := h.creditsSvc.CheckAndDeduct(c.Request.Context(), tenantID, "llm", "", 0, "AI整理"); deductErr != nil {
+			log.Printf("[credits] tenant=%d llm deduct error (non-fatal): %v", tenantID, deductErr)
 		}
 	}
 

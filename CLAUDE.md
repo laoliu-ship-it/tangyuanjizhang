@@ -24,6 +24,7 @@ cd web && npm run dev -- --port 5274
 - **JoinedAt 必须显式赋值**：创建 `TenantMember` 时必须设置 `JoinedAt: time.Now()`，MySQL 5.7 严格模式拒绝零值 datetime
 - **默认分类在 default_categories.go 维护**：注册和创建租户均调用 `createDefaultCategories()`，不在各自 service 中各自维护列表
 - **分析类接口失败必须用 `dto.Fail`**：LLM/OCR 等异步分析接口出错，不能用 `dto.OK` 包裹 `error` 字段返回 `code: 0`，必须用 `dto.Fail(code, message)` 让前端 axios 拦截器能正确捕获
+- **业务错误统一返回 HTTP 200**：所有需要展示给用户的业务错误（含积分不足 code:402、权限不足 code:403 等）必须用 `c.JSON(http.StatusOK, dto.Fail(code, "..."))` 而不是 HTTP 4xx。HTTP 非 200 仅用于协议层错误（401 未认证 → 前端自动跳登录，500 服务崩溃）。这保证 response 拦截器能捕获所有业务错误并自动 reject，前端 catch 块统一读 `err.message` 即可。
 
 ### React 前端
 
@@ -32,7 +33,7 @@ cd web && npm run dev -- --port 5274
 - **datetime-local 格式转换**：前端使用 `YYYY-MM-DDTHH:mm` 格式，提交时转为 `YYYY-MM-DD HH:mm:00`（replace T + 拼接秒）
 - **图片 URL 构造**：后端存储的 `image_path` 以 `/uploads/` 开头，前端访问时加 `/api` 前缀（vite proxy 会自动剥离转发）
 - **租户名后缀固定**：租户重命名时前端强制追加 `的记账本`，保存时拼接，显示时可剥离后缀展示前缀
-- **axios 全局错误拦截**：`api.ts` 响应拦截器已统一处理 `code !== 0`，自动 reject 并携带 `message`；所有 `catch` 块可直接读 `err.message` 展示 Toast，不需要在每个调用处重复判断 code
+- **catch 块只读 `err.message`**：`api.ts` response 拦截器统一处理 `code !== 0`，将后端 message 规范化到 `err.message`；前端所有 `catch` 块直接 `err instanceof Error ? err.message : '操作失败'`，不需要检查 `err.response?.data` 或判断 HTTP status
 
 ### 部署
 

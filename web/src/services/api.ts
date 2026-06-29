@@ -265,7 +265,7 @@ export interface TransactionListResponse {
 
 // 认证
 export const authApi = {
-  register: (data: { username: string; email: string; password: string }) =>
+  register: (data: { username: string; email: string; password: string; book_type: string }) =>
     api.post<ApiResponse<{ token: string; user_id: number; username: string; email: string; tenants: { id: number; name: string }[] }>>('/auth/register', data),
   login: (data: { email: string; password: string }) =>
     api.post<ApiResponse<{ token: string; user_id: number; username: string; email: string; tenants: { id: number; name: string }[] }>>('/auth/login', data),
@@ -458,4 +458,37 @@ export const rbacApi = {
     api.put<ApiResponse<TenantRole>>(`/tenants/${tenantId}/roles/${roleId}`, data),
   deleteRole: (tenantId: number, roleId: number) =>
     api.delete<ApiResponse<null>>(`/tenants/${tenantId}/roles/${roleId}`),
+}
+
+// ========== 积分系统 ==========
+
+export interface CreditLogItem {
+  id: number
+  amount: number       // 正=充值, 负=消耗
+  action: string       // upload/ocr/llm/gift/admin_adjust
+  balance_after: number // -1=unlimited
+  ref_type: string
+  ref_id: number
+  note: string
+  created_at: string
+}
+
+export interface CreditsResp {
+  tenant_id: number
+  balance: number
+  unlimited: boolean
+  logs: CreditLogItem[]
+}
+
+export interface CreditLogsPageResp {
+  total: number
+  page: number
+  size: number
+  logs: CreditLogItem[]
+}
+
+export const creditsApi = {
+  getBalance: () => api.get<ApiResponse<CreditsResp>>('/credits'),
+  getLogs: (page: number, size: number, type?: 'income' | 'expense') =>
+    api.get<ApiResponse<CreditLogsPageResp>>('/credits/logs', { params: { page, size, type } }),
 }

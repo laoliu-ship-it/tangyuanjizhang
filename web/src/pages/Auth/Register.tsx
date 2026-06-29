@@ -4,6 +4,14 @@ import { authApi } from '../../services/api'
 import { useAuthStore } from '../../store/auth'
 import { useTenantStore } from '../../store/tenant'
 
+type BookType = 'restaurant' | 'family' | 'startup'
+
+const bookTypeOptions = [
+  { value: 'restaurant' as BookType, label: '饭店', emoji: '🍽️', desc: '餐厅经营记账' },
+  { value: 'family' as BookType,     label: '家庭', emoji: '🏠', desc: '家庭收支管理' },
+  { value: 'startup' as BookType,    label: '创业', emoji: '🚀', desc: '初创企业财务' },
+]
+
 export default function Register() {
   const navigate = useNavigate()
   const { setAuth } = useAuthStore()
@@ -13,6 +21,7 @@ export default function Register() {
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
   const [confirmPassword, setConfirmPassword] = useState('')
+  const [bookType, setBookType] = useState<BookType>('restaurant')
   const [loading, setLoading] = useState(false)
 
   async function handleSubmit(e: React.FormEvent) {
@@ -27,14 +36,13 @@ export default function Register() {
     }
     setLoading(true)
     try {
-      const res = await authApi.register({ username, email, password })
+      const res = await authApi.register({ username, email, password, book_type: bookType })
       const { token, user_id, username: uname, tenants } = res.data.data
       setAuth(token, user_id, uname)
       setTenants((tenants ?? []).map((t: { id: number; name: string }) => ({ id: t.id, name: t.name })))
       navigate('/', { replace: true })
     } catch (err: unknown) {
-      const msg = (err as { response?: { data?: { message?: string } } })?.response?.data?.message
-      alert(msg || '注册失败，请重试')
+      alert(err instanceof Error ? err.message : '注册失败，请重试')
     } finally {
       setLoading(false)
     }
@@ -96,6 +104,28 @@ export default function Register() {
               required
               className="w-full px-4 py-3 border border-gray-300 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500 text-sm"
             />
+          </div>
+
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-1.5">账本类型</label>
+            <div className="grid grid-cols-3 gap-2">
+              {bookTypeOptions.map(opt => (
+                <button
+                  key={opt.value}
+                  type="button"
+                  onClick={() => setBookType(opt.value)}
+                  className={`flex flex-col items-center p-3 rounded-xl border-2 transition-colors text-sm cursor-pointer ${
+                    bookType === opt.value
+                      ? 'border-blue-500 bg-blue-50 text-blue-700'
+                      : 'border-gray-200 hover:border-gray-300 text-gray-600'
+                  }`}
+                >
+                  <span className="text-2xl mb-1">{opt.emoji}</span>
+                  <span className="font-medium">{opt.label}</span>
+                  <span className="text-xs text-gray-400 mt-0.5">{opt.desc}</span>
+                </button>
+              ))}
+            </div>
           </div>
 
           <button

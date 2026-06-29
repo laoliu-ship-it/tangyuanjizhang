@@ -1,246 +1,562 @@
 <!DOCTYPE html>
-<html lang="zh-CN">
+<html lang="zh-CN" class="scroll-smooth">
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>汤圆记账 - 简洁高效的多人协作记账工具</title>
-  <meta name="description" content="汤圆记账是一款专为团队设计的多人协作记账应用，支持OCR智能识别、多租户管理、角色权限控制、数据统计与导出。">
+  <title>汤圆记账 — 专业记账管理工具</title>
+  <meta name="description" content="汤圆记账是一款专业记账管理工具，支持 OCR 智能识别、AI 分析、多账本管理、统计报表、Excel 导入导出，PC 和手机均可使用。">
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script>
+    tailwind.config = {
+      theme: {
+        extend: {
+          colors: {
+            brand: {
+              50:  '#eff6ff',
+              100: '#dbeafe',
+              200: '#bfdbfe',
+              300: '#93c5fd',
+              400: '#60a5fa',
+              500: '#3b82f6',
+              600: '#2563eb',
+              700: '#1d4ed8',
+              800: '#1e40af',
+              900: '#1e3a8a',
+            }
+          },
+          fontFamily: {
+            sans: ['-apple-system', 'BlinkMacSystemFont', '"PingFang SC"', '"Hiragino Sans GB"', '"Microsoft YaHei"', 'sans-serif']
+          }
+        }
+      }
+    }
+  </script>
   <style>
-    :root {
-      --primary: #4f46e5;
-      --primary-light: #818cf8;
-      --bg: #0f172a;
-      --bg-card: #1e293b;
-      --text: #e2e8f0;
-      --text-muted: #94a3b8;
-      --accent: #f97316;
-      --radius: 12px;
+    .gradient-text {
+      background: linear-gradient(135deg, #2563eb 0%, #7c3aed 100%);
+      -webkit-background-clip: text;
+      -webkit-text-fill-color: transparent;
+      background-clip: text;
     }
-    * { margin: 0; padding: 0; box-sizing: border-box; }
-    body {
-      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", sans-serif;
-      background: var(--bg);
-      color: var(--text);
-      line-height: 1.6;
+    .hero-glow {
+      background: radial-gradient(ellipse 80% 60% at 50% -10%, rgba(37,99,235,0.12) 0%, transparent 70%);
     }
-    .container { max-width: 1100px; margin: 0 auto; padding: 0 24px; }
+    .feature-card:hover .feature-icon {
+      transform: scale(1.1);
+      transition: transform 0.25s ease;
+    }
+    .screenshot-frame {
+      border-radius: 12px;
+      box-shadow: 0 25px 60px -12px rgba(0,0,0,0.18), 0 0 0 1px rgba(0,0,0,0.05);
+    }
+    .mobile-frame {
+      border-radius: 32px;
+      box-shadow: 0 30px 70px -15px rgba(0,0,0,0.25), 0 0 0 1.5px rgba(0,0,0,0.08);
+    }
+    @keyframes float {
+      0%, 100% { transform: translateY(0); }
+      50% { transform: translateY(-10px); }
+    }
+    .float-anim { animation: float 4s ease-in-out infinite; }
+    .float-anim-delay { animation: float 4s ease-in-out infinite 1.5s; }
 
-    /* Hero */
-    .hero {
-      padding: 120px 0 80px;
-      text-align: center;
-      position: relative;
-      overflow: hidden;
-    }
-    .hero::before {
+    /* Nav active underline */
+    .nav-link::after {
       content: '';
-      position: absolute;
-      inset: 0;
-      background: radial-gradient(ellipse at 50% 0%, rgba(79,70,229,0.15) 0%, transparent 70%);
+      display: block;
+      width: 0;
+      height: 2px;
+      background: #2563eb;
+      transition: width 0.2s;
+      margin: 0 auto;
     }
-    .hero-logo {
-      width: 80px; height: 80px;
-      background: var(--primary);
-      border-radius: 50%;
-      display: inline-flex;
-      align-items: center;
-      justify-content: center;
-      font-size: 36px;
-      margin-bottom: 24px;
-      position: relative;
-    }
-    .hero h1 { font-size: 48px; font-weight: 700; margin-bottom: 16px; }
-    .hero p { font-size: 20px; color: var(--text-muted); max-width: 600px; margin: 0 auto 40px; }
-    .btn {
-      display: inline-flex;
-      padding: 14px 32px;
-      border-radius: 8px;
-      font-size: 16px;
-      font-weight: 600;
-      text-decoration: none;
-      transition: all 0.2s;
-      cursor: pointer;
-    }
-    .btn-primary { background: var(--primary); color: #fff; }
-    .btn-primary:hover { background: var(--primary-light); transform: translateY(-1px); }
-    .btn-outline { border: 1px solid var(--text-muted); color: var(--text); margin-left: 12px; }
-    .btn-outline:hover { border-color: var(--primary); color: var(--primary-light); }
+    .nav-link:hover::after { width: 100%; }
 
-    /* Features */
-    .features { padding: 80px 0; }
-    .features h2 { text-align: center; font-size: 32px; margin-bottom: 48px; }
-    .features-grid {
-      display: grid;
-      grid-template-columns: repeat(3, 1fr);
-      gap: 24px;
-    }
-    .feature-card {
-      background: var(--bg-card);
-      border-radius: var(--radius);
-      padding: 32px;
-      transition: transform 0.2s;
-    }
-    .feature-card:hover { transform: translateY(-4px); }
-    .feature-icon {
-      width: 48px; height: 48px;
-      background: rgba(79,70,229,0.15);
-      border-radius: 8px;
-      display: flex;
-      align-items: center;
-      justify-content: center;
-      font-size: 24px;
-      margin-bottom: 16px;
-    }
-    .feature-card h3 { font-size: 18px; margin-bottom: 8px; }
-    .feature-card p { color: var(--text-muted); font-size: 14px; }
-
-    /* How it works */
-    .steps { padding: 80px 0; }
-    .steps h2 { text-align: center; font-size: 32px; margin-bottom: 48px; }
-    .steps-list {
-      display: flex;
-      gap: 32px;
-      justify-content: center;
-    }
-    .step {
-      text-align: center;
-      flex: 1;
-      max-width: 260px;
-    }
-    .step-num {
-      width: 56px; height: 56px;
-      background: var(--primary);
-      border-radius: 50%;
-      display: inline-flex;
-      align-items: center;
-      justify-content: center;
-      font-size: 24px;
-      font-weight: 700;
-      color: #fff;
-      margin-bottom: 16px;
-    }
-    .step h3 { font-size: 18px; margin-bottom: 8px; }
-    .step p { color: var(--text-muted); font-size: 14px; }
-
-    /* CTA */
-    .cta {
-      padding: 80px 0;
-      text-align: center;
-    }
-    .cta-box {
-      background: var(--bg-card);
-      border-radius: var(--radius);
-      padding: 48px;
-      border: 1px solid rgba(79,70,229,0.3);
-    }
-    .cta h2 { font-size: 32px; margin-bottom: 16px; }
-    .cta p { color: var(--text-muted); margin-bottom: 32px; }
-
-    /* Footer */
-    footer {
-      padding: 40px 0;
-      border-top: 1px solid rgba(148,163,184,0.2);
-      text-align: center;
-      color: var(--text-muted);
-      font-size: 14px;
-    }
-
-    @media (max-width: 768px) {
-      .hero h1 { font-size: 32px; }
-      .hero p { font-size: 16px; }
-      .features-grid { grid-template-columns: 1fr; }
-      .steps-list { flex-direction: column; align-items: center; }
-    }
   </style>
 </head>
-<body>
+<body class="font-sans bg-white text-slate-900 antialiased">
 
-<section class="hero">
-  <div class="container">
-    <div class="hero-logo">&#127834;</div>
-    <h1>汤圆记账</h1>
-    <p>简洁高效的多人协作记账工具，专为团队和小型商户设计</p>
-    <a href="https://jizhang.zaixianapp.cn" class="btn btn-primary">立即使用</a>
-    <a href="#features" class="btn btn-outline">了解更多</a>
-  </div>
-</section>
+  <!-- ===== NAVBAR ===== -->
+  <header class="sticky top-0 z-50 bg-white/80 backdrop-blur-md border-b border-slate-100">
+    <div class="max-w-6xl mx-auto px-4 sm:px-6 flex items-center justify-between h-16">
+      <a href="#" class="flex items-center gap-2 font-bold text-xl text-brand-600">
+        <span class="text-2xl">🍡</span>
+        <span>汤圆记账</span>
+      </a>
+      <nav class="hidden md:flex items-center gap-8 text-sm font-medium text-slate-600">
+        <a href="#features" class="nav-link hover:text-brand-600 transition-colors">功能</a>
+        <a href="#screenshots" class="nav-link hover:text-brand-600 transition-colors">截图</a>
+        <a href="#how" class="nav-link hover:text-brand-600 transition-colors">使用流程</a>
+        <a href="#pricing" class="nav-link hover:text-brand-600 transition-colors">定价</a>
+      </nav>
+      <a href="https://tangyuanjizhang.zaixianapp.cn" target="_blank"
+         class="bg-brand-600 text-white text-sm font-semibold px-5 py-2 rounded-lg hover:bg-brand-700 transition-colors shadow-sm">
+        免费使用
+      </a>
+    </div>
+  </header>
 
-<section class="features" id="features">
-  <div class="container">
-    <h2>核心功能</h2>
-    <div class="features-grid">
-      <div class="feature-card">
-        <div class="feature-icon">&#128101;</div>
-        <h3>多租户协作</h3>
-        <p>支持创建多个记账空间，邀请团队成员加入，每个租户数据完全隔离，安全可靠。</p>
+  <!-- ===== HERO ===== -->
+  <section class="hero-glow overflow-hidden">
+    <div class="max-w-6xl mx-auto px-4 sm:px-6 pt-20 pb-0 text-center">
+      <!-- Badge -->
+      <div class="inline-flex items-center gap-2 bg-brand-50 border border-brand-100 text-brand-700 text-sm font-medium px-4 py-1.5 rounded-full mb-8">
+        <span class="w-2 h-2 bg-brand-500 rounded-full"></span>
+        专业记账管理工具
       </div>
-      <div class="feature-card">
-        <div class="feature-icon">&#128274;</div>
-        <h3>角色权限管理</h3>
-        <p>管理员、编辑者、查看者、财务等多级角色，精确控制谁可以查看、录入或修改数据。</p>
+
+      <h1 class="text-4xl sm:text-5xl md:text-6xl font-extrabold leading-tight mb-6 tracking-tight">
+        告别手账<br>
+        <span class="gradient-text">智能高效记账</span>
+      </h1>
+      <p class="text-lg sm:text-xl text-slate-500 max-w-2xl mx-auto mb-10 leading-relaxed">
+        多人共享账本、权限分级管理、OCR 拍照录入、AI 自动整理，
+        商户成本一键分析，任意时间段收支对比，PC 和手机随时可用。
+      </p>
+
+      <div class="flex flex-col sm:flex-row items-center justify-center gap-4 mb-16">
+        <a href="https://tangyuanjizhang.zaixianapp.cn" target="_blank"
+           class="w-full sm:w-auto inline-flex items-center justify-center gap-2 bg-brand-600 text-white font-semibold px-8 py-3.5 rounded-xl hover:bg-brand-700 transition-all shadow-lg shadow-brand-200 hover:shadow-brand-300 hover:-translate-y-0.5">
+          <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 10V3L4 14h7v7l9-11h-7z"/></svg>
+          立即免费使用
+        </a>
+        <a href="#screenshots"
+           class="w-full sm:w-auto inline-flex items-center justify-center gap-2 bg-white text-slate-700 font-semibold px-8 py-3.5 rounded-xl border border-slate-200 hover:border-brand-300 hover:text-brand-600 transition-all">
+          <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"/><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z"/></svg>
+          查看截图
+        </a>
       </div>
-      <div class="feature-card">
-        <div class="feature-icon">&#128247;</div>
-        <h3>OCR 智能识别</h3>
-        <p>拍照上传票据，自动识别金额、商户等信息，一键生成记账记录，告别手动录入。</p>
-      </div>
-      <div class="feature-card">
-        <div class="feature-icon">&#128202;</div>
-        <h3>数据统计</h3>
-        <p>日度、月度、年度多维度统计分析，收支趋势一目了然，助力科学决策。</p>
-      </div>
-      <div class="feature-card">
-        <div class="feature-icon">&#128190;</div>
-        <h3>Excel 导入导出</h3>
-        <p>一键导出数据为 Excel 报表，支持批量导入，轻松对接财务系统。</p>
-      </div>
-      <div class="feature-card">
-        <div class="feature-icon">&#127978;</div>
-        <h3>商户与分类</h3>
-        <p>自定义收支分类和常用商户，录入时快速选择，让记账更有条理。</p>
+
+      <!-- Hero Screenshots -->
+      <div class="relative flex items-end justify-center gap-4">
+        <!-- Desktop screenshot -->
+        <div class="w-full max-w-3xl float-anim">
+          <img src="images/after_login.png" alt="汤圆记账首页" class="screenshot-frame w-full">
+        </div>
+        <!-- Mobile screenshot overlay -->
+        <div class="absolute -right-2 sm:right-8 md:right-16 bottom-0 w-28 sm:w-36 md:w-44 float-anim-delay">
+          <img src="images/mobile_home.png" alt="手机端" class="mobile-frame w-full">
+        </div>
       </div>
     </div>
-  </div>
-</section>
+  </section>
 
-<section class="steps">
-  <div class="container">
-    <h2>三步开始</h2>
-    <div class="steps-list">
-      <div class="step">
-        <div class="step-num">1</div>
-        <h3>注册账号</h3>
-        <p>快速创建账号，自动生成默认记账空间</p>
-      </div>
-      <div class="step">
-        <div class="step-num">2</div>
-        <h3>邀请成员</h3>
-        <p>将团队成员加入租户，按需分配权限</p>
-      </div>
-      <div class="step">
-        <div class="step-num">3</div>
-        <h3>开始记账</h3>
-        <p>手动录入或拍照识别，随时查看统计报表</p>
+  <!-- ===== STATS BAR ===== -->
+  <section class="bg-slate-50 border-y border-slate-100 mt-8">
+    <div class="max-w-6xl mx-auto px-4 sm:px-6 py-10">
+      <div class="grid grid-cols-2 md:grid-cols-4 gap-8 text-center">
+        <div>
+          <div class="text-3xl font-bold text-brand-600 mb-1">共享</div>
+          <div class="text-sm text-slate-500">多人协作记账</div>
+        </div>
+        <div>
+          <div class="text-3xl font-bold text-brand-600 mb-1">OCR</div>
+          <div class="text-sm text-slate-500">拍照秒录账单</div>
+        </div>
+        <div>
+          <div class="text-3xl font-bold text-brand-600 mb-1">AI</div>
+          <div class="text-sm text-slate-500">自动整理分析</div>
+        </div>
+        <div>
+          <div class="text-3xl font-bold text-brand-600 mb-1">免费</div>
+          <div class="text-sm text-slate-500">注册即可使用</div>
+        </div>
       </div>
     </div>
-  </div>
-</section>
+  </section>
 
-<section class="cta">
-  <div class="container">
-    <div class="cta-box">
-      <h2>开始使用汤圆记账</h2>
-      <p>免费、开源，立即体验多人协作记账的便捷</p>
-      <a href="https://jizhang.zaixianapp.cn" class="btn btn-primary">前往应用</a>
+  <!-- ===== FEATURES ===== -->
+  <section id="features" class="py-24">
+    <div class="max-w-6xl mx-auto px-4 sm:px-6">
+      <div class="text-center mb-16">
+        <h2 class="text-3xl sm:text-4xl font-bold mb-4">专为小微商户打造的记账功能</h2>
+        <p class="text-slate-500 text-lg max-w-xl mx-auto">从拍照录入到 AI 整理，从商户成本分析到多人协作，覆盖餐饮、零售、服务各类场景。</p>
+      </div>
+
+      <div class="grid sm:grid-cols-2 lg:grid-cols-3 gap-6">
+
+        <!-- Feature 1: 多用户共享账本 -->
+        <div class="feature-card group bg-white rounded-2xl p-7 border border-slate-100 hover:border-brand-200 hover:shadow-xl hover:shadow-brand-50 transition-all duration-300">
+          <div class="feature-icon w-12 h-12 bg-brand-50 rounded-xl flex items-center justify-center text-2xl mb-5 transition-transform duration-300">👥</div>
+          <h3 class="font-semibold text-lg mb-2">多用户共享账本</h3>
+          <p class="text-slate-500 text-sm leading-relaxed">老板、会计、收银员同一账本协作记账。邀请成员加入，所有人实时看到最新流水，不再靠微信传账单。</p>
+        </div>
+
+        <!-- Feature 2: 权限管理 -->
+        <div class="feature-card group bg-white rounded-2xl p-7 border border-slate-100 hover:border-brand-200 hover:shadow-xl hover:shadow-brand-50 transition-all duration-300">
+          <div class="feature-icon w-12 h-12 bg-indigo-50 rounded-xl flex items-center justify-center text-2xl mb-5 transition-transform duration-300">🔐</div>
+          <h3 class="font-semibold text-lg mb-2">多级权限管理</h3>
+          <p class="text-slate-500 text-sm leading-relaxed">管理员可录入、修改、导出全部数据；普通成员只能录入不能删改；查看角色仅看报表——权责清晰，数据安全。</p>
+        </div>
+
+        <!-- Feature 3: OCR -->
+        <div class="feature-card group bg-white rounded-2xl p-7 border border-slate-100 hover:border-brand-200 hover:shadow-xl hover:shadow-brand-50 transition-all duration-300">
+          <div class="feature-icon w-12 h-12 bg-sky-50 rounded-xl flex items-center justify-center text-2xl mb-5 transition-transform duration-300">📸</div>
+          <h3 class="font-semibold text-lg mb-2">OCR 拍照识别</h3>
+          <p class="text-slate-500 text-sm leading-relaxed">拍下收据、采购单或小票，自动识别金额、日期、商品名称，直接生成一条记账记录，录入效率提升 10 倍。</p>
+        </div>
+
+        <!-- Feature 4: AI 整理 -->
+        <div class="feature-card group bg-white rounded-2xl p-7 border border-slate-100 hover:border-brand-200 hover:shadow-xl hover:shadow-brand-50 transition-all duration-300">
+          <div class="feature-icon w-12 h-12 bg-purple-50 rounded-xl flex items-center justify-center text-2xl mb-5 transition-transform duration-300">🤖</div>
+          <h3 class="font-semibold text-lg mb-2">AI 智能整理与建议</h3>
+          <p class="text-slate-500 text-sm leading-relaxed">AI 自动归类杂乱流水，识别异常支出，生成一段话分析本月收支状况，并给出降本增效的具体建议。</p>
+        </div>
+
+        <!-- Feature 5: 商户成本分析 -->
+        <div class="feature-card group bg-white rounded-2xl p-7 border border-slate-100 hover:border-brand-200 hover:shadow-xl hover:shadow-brand-50 transition-all duration-300">
+          <div class="feature-icon w-12 h-12 bg-orange-50 rounded-xl flex items-center justify-center text-2xl mb-5 transition-transform duration-300">🏪</div>
+          <h3 class="font-semibold text-lg mb-2">商户成本分析</h3>
+          <p class="text-slate-500 text-sm leading-relaxed">按供应商自动汇总采购金额，Top10 商户排名一目了然。及时发现哪个供应商占成本大头，谈价、换供应商有据可查。</p>
+        </div>
+
+        <!-- Feature 6: 时间段分析 -->
+        <div class="feature-card group bg-white rounded-2xl p-7 border border-slate-100 hover:border-brand-200 hover:shadow-xl hover:shadow-brand-50 transition-all duration-300">
+          <div class="feature-icon w-12 h-12 bg-green-50 rounded-xl flex items-center justify-center text-2xl mb-5 transition-transform duration-300">📅</div>
+          <h3 class="font-semibold text-lg mb-2">灵活时间段分析</h3>
+          <p class="text-slate-500 text-sm leading-relaxed">按日、按月、按年或任意自定义日期段查看收支趋势。对比旺季淡季、同比上月，掌握生意的周期规律。</p>
+        </div>
+
+      </div>
     </div>
-  </div>
-</section>
+  </section>
 
-<footer>
-  <div class="container">
-    <p>&copy; 2024 汤圆记账 - 简洁高效的多人协作记账工具</p>
+  <!-- ===== USE CASES ===== -->
+  <section class="py-20 bg-slate-50">
+    <div class="max-w-6xl mx-auto px-4 sm:px-6">
+      <div class="text-center mb-14">
+        <h2 class="text-3xl sm:text-4xl font-bold mb-4">哪些人在用汤圆记账？</h2>
+        <p class="text-slate-500 text-lg">不论你是老板还是会计，一个人还是整个团队</p>
+      </div>
+
+      <div class="grid sm:grid-cols-2 lg:grid-cols-4 gap-5">
+
+        <div class="bg-white rounded-2xl p-6 border border-slate-100 hover:border-orange-200 hover:shadow-lg transition-all duration-300">
+          <div class="text-3xl mb-4">🍜</div>
+          <h3 class="font-semibold text-base mb-2">餐馆老板</h3>
+          <p class="text-slate-500 text-sm leading-relaxed">每天采购食材票据一拍，食材成本、水电、人工分类自动归，月底供应商成本一目了然。</p>
+        </div>
+
+        <div class="bg-white rounded-2xl p-6 border border-slate-100 hover:border-blue-200 hover:shadow-lg transition-all duration-300">
+          <div class="text-3xl mb-4">🛍️</div>
+          <h3 class="font-semibold text-base mb-2">零售小店</h3>
+          <p class="text-slate-500 text-sm leading-relaxed">老板记销售、员工记进货，同一账本实时同步，不用下班再汇总，进销存一览无余。</p>
+        </div>
+
+        <div class="bg-white rounded-2xl p-6 border border-slate-100 hover:border-green-200 hover:shadow-lg transition-all duration-300">
+          <div class="text-3xl mb-4">🏗️</div>
+          <h3 class="font-semibold text-base mb-2">工程包工头</h3>
+          <p class="text-slate-500 text-sm leading-relaxed">工地材料采购单拍照记账，按供应商追踪累计欠款，AI 汇总工程成本让甲方对账不心虚。</p>
+        </div>
+
+        <div class="bg-white rounded-2xl p-6 border border-slate-100 hover:border-purple-200 hover:shadow-lg transition-all duration-300">
+          <div class="text-3xl mb-4">💼</div>
+          <h3 class="font-semibold text-base mb-2">财务兼职会计</h3>
+          <p class="text-slate-500 text-sm leading-relaxed">同时管理多个客户账本，权限隔离互不干扰，随时导出 Excel 报表给老板，专业又高效。</p>
+        </div>
+
+      </div>
+    </div>
+  </section>
+
+  <!-- ===== SCREENSHOTS ===== -->
+  <section id="screenshots" class="py-24 bg-slate-50">
+    <div class="max-w-6xl mx-auto px-4 sm:px-6">
+      <div class="text-center mb-16">
+        <h2 class="text-3xl sm:text-4xl font-bold mb-4">清爽的界面，流畅的体验</h2>
+        <p class="text-slate-500 text-lg">PC 和手机均有针对性优化，随时随地记账不受设备限制</p>
+      </div>
+
+      <!-- PC Screenshots -->
+      <div class="space-y-8 mb-16">
+
+        <!-- Transaction list -->
+        <div class="bg-white rounded-2xl p-4 sm:p-6 border border-slate-100 shadow-sm">
+          <div class="flex items-center gap-2 mb-4">
+            <div class="flex gap-1.5">
+              <span class="w-3 h-3 bg-red-400 rounded-full"></span>
+              <span class="w-3 h-3 bg-yellow-400 rounded-full"></span>
+              <span class="w-3 h-3 bg-green-400 rounded-full"></span>
+            </div>
+            <span class="text-xs text-slate-400 ml-2">交易记录</span>
+          </div>
+          <img src="images/transactions.png" alt="交易记录列表" class="w-full rounded-lg">
+        </div>
+
+        <!-- Two-column: statistics + mobile -->
+        <div class="grid md:grid-cols-5 gap-6">
+          <div class="md:col-span-3 bg-white rounded-2xl p-4 sm:p-6 border border-slate-100 shadow-sm">
+            <div class="flex items-center gap-2 mb-4">
+              <div class="flex gap-1.5">
+                <span class="w-3 h-3 bg-red-400 rounded-full"></span>
+                <span class="w-3 h-3 bg-yellow-400 rounded-full"></span>
+                <span class="w-3 h-3 bg-green-400 rounded-full"></span>
+              </div>
+              <span class="text-xs text-slate-400 ml-2">统计分析</span>
+            </div>
+            <img src="images/statistics.png" alt="统计分析" class="w-full rounded-lg">
+          </div>
+
+          <!-- Mobile screenshots -->
+          <div class="md:col-span-2 flex gap-4 justify-center">
+            <div class="flex-1 max-w-[180px]">
+              <p class="text-xs text-slate-400 text-center mb-3">手机端首页</p>
+              <img src="images/mobile_home.png" alt="手机端首页" class="mobile-frame w-full">
+            </div>
+            <div class="flex-1 max-w-[180px]">
+              <p class="text-xs text-slate-400 text-center mb-3">手机端记账</p>
+              <img src="images/mobile_transactions.png" alt="手机端记账" class="mobile-frame w-full">
+            </div>
+          </div>
+        </div>
+
+      </div>
+    </div>
+  </section>
+
+  <!-- ===== HOW IT WORKS ===== -->
+  <section id="how" class="py-24">
+    <div class="max-w-6xl mx-auto px-4 sm:px-6">
+      <div class="text-center mb-16">
+        <h2 class="text-3xl sm:text-4xl font-bold mb-4">三步开始记账</h2>
+        <p class="text-slate-500 text-lg">注册即用，无需安装，2 分钟上手</p>
+      </div>
+
+      <div class="grid md:grid-cols-3 gap-8">
+
+        <div class="flex flex-col items-center text-center">
+          <div class="w-20 h-20 bg-brand-600 rounded-2xl flex items-center justify-center text-3xl text-white mb-6 shadow-lg shadow-brand-200">
+            ✍️
+          </div>
+          <div class="bg-brand-600 text-white text-xs font-bold px-3 py-1 rounded-full mb-4">第一步</div>
+          <h3 class="text-xl font-semibold mb-3">注册账号</h3>
+          <p class="text-slate-500 text-sm leading-relaxed">输入邮箱和密码，即刻注册，系统自动创建默认记账本，内置常用收支分类。</p>
+        </div>
+
+        <div class="flex flex-col items-center text-center">
+          <div class="w-20 h-20 bg-brand-500 rounded-2xl flex items-center justify-center text-3xl text-white mb-6 shadow-lg shadow-brand-200">
+            📝
+          </div>
+          <div class="bg-brand-500 text-white text-xs font-bold px-3 py-1 rounded-full mb-4">第二步</div>
+          <h3 class="text-xl font-semibold mb-3">录入账目</h3>
+          <p class="text-slate-500 text-sm leading-relaxed">手动填写收支信息，或拍照让 OCR 自动识别，批量导入 Excel 也轻松搞定。</p>
+        </div>
+
+        <div class="flex flex-col items-center text-center">
+          <div class="w-20 h-20 bg-brand-400 rounded-2xl flex items-center justify-center text-3xl text-white mb-6 shadow-lg shadow-brand-200">
+            📈
+          </div>
+          <div class="bg-brand-400 text-white text-xs font-bold px-3 py-1 rounded-full mb-4">第三步</div>
+          <h3 class="text-xl font-semibold mb-3">查看报表</h3>
+          <p class="text-slate-500 text-sm leading-relaxed">随时查看今日收支、月度趋势、分类占比，导出报表，掌握每一笔资金流向。</p>
+        </div>
+
+      </div>
+    </div>
+  </section>
+
+  <!-- ===== DIFFERENTIATORS ===== -->
+  <section class="py-20 bg-gradient-to-br from-brand-600 to-indigo-700">
+    <div class="max-w-6xl mx-auto px-4 sm:px-6">
+      <div class="text-center mb-12">
+        <h2 class="text-3xl sm:text-4xl font-bold text-white mb-3">别的记账 App 没有的</h2>
+        <p class="text-brand-200 text-lg">几个让你真正省心的细节</p>
+      </div>
+      <div class="grid sm:grid-cols-2 lg:grid-cols-4 gap-5 text-white">
+        <div class="bg-white/10 backdrop-blur-sm rounded-2xl p-6 border border-white/20">
+          <div class="text-3xl mb-4">🖼️</div>
+          <h3 class="font-bold text-base mb-2">多图批量 OCR</h3>
+          <p class="text-brand-100 text-sm leading-relaxed">一次上传多张票据，排队自动识别。同一张图重复上传系统自动去重，不会多扣费用。</p>
+        </div>
+        <div class="bg-white/10 backdrop-blur-sm rounded-2xl p-6 border border-white/20">
+          <div class="text-3xl mb-4">📎</div>
+          <h3 class="font-bold text-base mb-2">票据图片存档</h3>
+          <p class="text-brand-100 text-sm leading-relaxed">每笔账目挂载原始票据图片，点开记录可查原图，再也不用翻箱倒柜找纸质收据。</p>
+        </div>
+        <div class="bg-white/10 backdrop-blur-sm rounded-2xl p-6 border border-white/20">
+          <div class="text-3xl mb-4">🪙</div>
+          <h3 class="font-bold text-base mb-2">积分透明计费</h3>
+          <p class="text-brand-100 text-sm leading-relaxed">OCR 识别、AI 分析按积分消耗，每次用多少花多少，流水明细一清二楚，不订阅不绑定。</p>
+        </div>
+        <div class="bg-white/10 backdrop-blur-sm rounded-2xl p-6 border border-white/20">
+          <div class="text-3xl mb-4">🔧</div>
+          <h3 class="font-bold text-base mb-2">自定义 AI 接入</h3>
+          <p class="text-brand-100 text-sm leading-relaxed">管理员可接入自己的 OpenAI / Claude API Key，自定义识别提示词，私有化控制 AI 成本。</p>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ===== PRICING ===== -->
+  <section id="pricing" class="py-24 bg-slate-50">
+    <div class="max-w-5xl mx-auto px-4 sm:px-6">
+      <div class="text-center mb-14">
+        <h2 class="text-3xl sm:text-4xl font-bold mb-4">简单透明的定价</h2>
+        <p class="text-slate-500 text-lg max-w-xl mx-auto">记账核心功能永久免费；OCR 和 AI 消耗积分，充值即可使用，<strong class="text-slate-700">无月租，无订阅</strong></p>
+      </div>
+
+      <div class="grid md:grid-cols-2 gap-8 items-stretch">
+
+        <!-- Free -->
+        <div class="bg-white rounded-2xl border-2 border-slate-200 p-8 flex flex-col">
+          <div class="mb-6">
+            <span class="inline-block bg-slate-100 text-slate-600 text-xs font-bold px-3 py-1 rounded-full mb-4">免费版</span>
+            <div class="flex items-end gap-2">
+              <span class="text-5xl font-extrabold text-slate-900">¥0</span>
+              <span class="text-slate-400 mb-1.5">/ 永久</span>
+            </div>
+            <p class="text-slate-400 text-sm mt-2">注册即用，无需付费</p>
+          </div>
+          <ul class="space-y-3 text-sm text-slate-600 flex-1 mb-8">
+            <li class="flex items-center gap-2.5"><svg class="w-4 h-4 text-green-500 flex-shrink-0" fill="currentColor" viewBox="0 0 20 20"><path fill-rule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clip-rule="evenodd"/></svg>无限条记账记录</li>
+            <li class="flex items-center gap-2.5"><svg class="w-4 h-4 text-green-500 flex-shrink-0" fill="currentColor" viewBox="0 0 20 20"><path fill-rule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clip-rule="evenodd"/></svg>多账本管理</li>
+            <li class="flex items-center gap-2.5"><svg class="w-4 h-4 text-green-500 flex-shrink-0" fill="currentColor" viewBox="0 0 20 20"><path fill-rule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clip-rule="evenodd"/></svg>多用户协作 + 权限管理</li>
+            <li class="flex items-center gap-2.5"><svg class="w-4 h-4 text-green-500 flex-shrink-0" fill="currentColor" viewBox="0 0 20 20"><path fill-rule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clip-rule="evenodd"/></svg>统计分析 + 时间段对比</li>
+            <li class="flex items-center gap-2.5"><svg class="w-4 h-4 text-green-500 flex-shrink-0" fill="currentColor" viewBox="0 0 20 20"><path fill-rule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clip-rule="evenodd"/></svg>商户成本排名</li>
+            <li class="flex items-center gap-2.5"><svg class="w-4 h-4 text-green-500 flex-shrink-0" fill="currentColor" viewBox="0 0 20 20"><path fill-rule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clip-rule="evenodd"/></svg>Excel 导入导出</li>
+            <li class="flex items-center gap-2.5"><svg class="w-4 h-4 text-slate-300 flex-shrink-0" fill="currentColor" viewBox="0 0 20 20"><path fill-rule="evenodd" d="M4.293 4.293a1 1 0 011.414 0L10 8.586l4.293-4.293a1 1 0 111.414 1.414L11.414 10l4.293 4.293a1 1 0 01-1.414 1.414L10 11.414l-4.293 4.293a1 1 0 01-1.414-1.414L8.586 10 4.293 5.707a1 1 0 010-1.414z" clip-rule="evenodd"/></svg><span class="text-slate-400">OCR 拍照识别（需积分）</span></li>
+            <li class="flex items-center gap-2.5"><svg class="w-4 h-4 text-slate-300 flex-shrink-0" fill="currentColor" viewBox="0 0 20 20"><path fill-rule="evenodd" d="M4.293 4.293a1 1 0 011.414 0L10 8.586l4.293-4.293a1 1 0 111.414 1.414L11.414 10l4.293 4.293a1 1 0 01-1.414 1.414L10 11.414l-4.293 4.293a1 1 0 01-1.414-1.414L8.586 10 4.293 5.707a1 1 0 010-1.414z" clip-rule="evenodd"/></svg><span class="text-slate-400">AI 智能分析（需积分）</span></li>
+          </ul>
+          <a href="https://tangyuanjizhang.zaixianapp.cn" target="_blank"
+             class="block text-center w-full py-3 rounded-xl border-2 border-slate-200 font-semibold text-slate-700 hover:border-brand-400 hover:text-brand-600 transition-colors text-sm">
+            免费注册
+          </a>
+        </div>
+
+        <!-- Credits -->
+        <div class="bg-white rounded-2xl border-2 border-brand-500 p-8 relative shadow-2xl shadow-brand-100 flex flex-col">
+          <div class="absolute -top-3.5 left-8">
+            <span class="bg-brand-500 text-white text-xs font-bold px-4 py-1.5 rounded-full">按需充值 · 无月租</span>
+          </div>
+          <div class="mb-6">
+            <span class="inline-block bg-brand-50 text-brand-700 text-xs font-bold px-3 py-1 rounded-full mb-4">积分充值包</span>
+            <div class="flex items-end gap-2">
+              <span class="text-5xl font-extrabold text-slate-900">¥10</span>
+              <span class="text-slate-400 mb-1.5">= 500 积分</span>
+            </div>
+            <p class="text-brand-600 text-sm font-medium mt-2">🎁 充多少用多少，积分 <strong>1 年内有效</strong></p>
+          </div>
+
+          <!-- Credit usage table -->
+          <div class="bg-slate-50 rounded-xl p-4 mb-5 text-sm">
+            <p class="font-semibold text-slate-700 mb-3">500 积分能做什么？</p>
+            <div class="space-y-2 text-slate-600">
+              <div class="flex justify-between items-center">
+                <span>📸 OCR 拍照识别</span>
+                <span class="font-mono text-brand-600 font-semibold">约 50 次</span>
+              </div>
+              <div class="flex justify-between items-center">
+                <span>🤖 AI 智能分析</span>
+                <span class="font-mono text-brand-600 font-semibold">约 25 次</span>
+              </div>
+              <div class="border-t border-slate-200 pt-2 mt-2 text-xs text-slate-400">
+                每月拍 30 张票据 + 分析 10 次 ≈ 用 4 个月
+              </div>
+            </div>
+          </div>
+
+          <ul class="space-y-3 text-sm text-slate-600 flex-1 mb-6">
+            <li class="flex items-center gap-2.5"><svg class="w-4 h-4 text-brand-500 flex-shrink-0" fill="currentColor" viewBox="0 0 20 20"><path fill-rule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clip-rule="evenodd"/></svg>包含所有免费版功能</li>
+            <li class="flex items-center gap-2.5"><svg class="w-4 h-4 text-brand-500 flex-shrink-0" fill="currentColor" viewBox="0 0 20 20"><path fill-rule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clip-rule="evenodd"/></svg>图片云端存档，随时可查原图</li>
+            <li class="flex items-center gap-2.5"><svg class="w-4 h-4 text-brand-500 flex-shrink-0" fill="currentColor" viewBox="0 0 20 20"><path fill-rule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clip-rule="evenodd"/></svg>重复图片自动去重，不重复扣费</li>
+            <li class="flex items-center gap-2.5"><svg class="w-4 h-4 text-brand-500 flex-shrink-0" fill="currentColor" viewBox="0 0 20 20"><path fill-rule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clip-rule="evenodd"/></svg>积分用完随时再充，无绑定</li>
+          </ul>
+          <a href="https://tangyuanjizhang.zaixianapp.cn" target="_blank"
+             class="block text-center w-full py-3.5 rounded-xl bg-brand-600 text-white font-bold hover:bg-brand-700 transition-colors shadow-lg shadow-brand-200 text-sm">
+            立即充值 · ¥10 起
+          </a>
+        </div>
+
+      </div>
+
+      <div class="mt-8 bg-amber-50 border border-amber-200 rounded-xl px-5 py-4 flex items-start gap-3 text-sm">
+        <span class="text-amber-500 text-lg flex-shrink-0">⚠️</span>
+        <p class="text-amber-800">积分自充值之日起 <strong>1 年内有效</strong>，到期未使用自动清零；积分一经充值<strong>不可退款</strong>。</p>
+      </div>
+    </div>
+  </section>
+
+  <!-- ===== CTA ===== -->
+  <section class="py-28">
+    <div class="max-w-3xl mx-auto px-4 sm:px-6 text-center">
+      <div class="text-5xl mb-6">🍡</div>
+      <h2 class="text-3xl sm:text-4xl font-extrabold mb-5 leading-tight">
+        开始你的<span class="gradient-text">第一本账</span>
+      </h2>
+      <p class="text-slate-500 text-lg mb-10">
+        免费注册，立即体验 OCR 识别、AI 分析、统计报表全部功能。
+      </p>
+      <a href="https://tangyuanjizhang.zaixianapp.cn" target="_blank"
+         class="inline-flex items-center gap-3 bg-brand-600 text-white font-bold text-lg px-10 py-4 rounded-xl hover:bg-brand-700 transition-all shadow-2xl shadow-brand-200 hover:-translate-y-1 hover:shadow-brand-300">
+        <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 10V3L4 14h7v7l9-11h-7z"/></svg>
+        免费开始记账
+      </a>
+      <p class="text-slate-400 text-sm mt-5">无需信用卡 · 注册即可使用</p>
+    </div>
+  </section>
+
+  <!-- ===== FOOTER ===== -->
+  <footer class="bg-slate-900 text-slate-400">
+    <div class="max-w-6xl mx-auto px-4 sm:px-6 py-14">
+      <div class="flex flex-col md:flex-row justify-between items-start gap-10 mb-12">
+
+        <!-- Brand -->
+        <div class="max-w-xs">
+          <div class="flex items-center gap-2 text-white font-bold text-xl mb-3">
+            <span class="text-2xl">🍡</span>
+            <span>汤圆记账</span>
+          </div>
+          <p class="text-sm leading-relaxed">专业的记账管理工具，帮助个人和小微商户轻松管理每一笔收支。</p>
+        </div>
+
+        <!-- Links -->
+        <div class="grid grid-cols-2 sm:grid-cols-3 gap-10 text-sm">
+          <div>
+            <h4 class="text-white font-semibold mb-4">产品</h4>
+            <ul class="space-y-2.5">
+              <li><a href="#features" class="hover:text-white transition-colors">功能介绍</a></li>
+              <li><a href="#screenshots" class="hover:text-white transition-colors">产品截图</a></li>
+              <li><a href="https://tangyuanjizhang.zaixianapp.cn" target="_blank" class="hover:text-white transition-colors">立即使用</a></li>
+            </ul>
+          </div>
+          <div>
+            <h4 class="text-white font-semibold mb-4">功能</h4>
+            <ul class="space-y-2.5">
+              <li><a href="#" class="hover:text-white transition-colors">OCR 识别</a></li>
+              <li><a href="#" class="hover:text-white transition-colors">AI 分析</a></li>
+              <li><a href="#" class="hover:text-white transition-colors">统计报表</a></li>
+              <li><a href="#" class="hover:text-white transition-colors">Excel 导出</a></li>
+            </ul>
+          </div>
+          <div>
+            <h4 class="text-white font-semibold mb-4">支持</h4>
+            <ul class="space-y-2.5">
+              <li><a href="https://tangyuanjizhang.zaixianapp.cn/help" target="_blank" class="hover:text-white transition-colors">帮助中心</a></li>
+              <li><a href="https://tangyuanjizhang.zaixianapp.cn" target="_blank" class="hover:text-white transition-colors">登录 / 注册</a></li>
+            </ul>
+          </div>
+        </div>
+      </div>
+
+      <div class="border-t border-slate-800 pt-8 flex flex-col sm:flex-row justify-between items-center gap-4 text-sm">
+        <p>&copy; 2026 汤圆记账. All rights reserved.</p>
+        <div class="flex items-center gap-1 text-slate-500">
+          <span>Made with</span>
+          <span class="text-red-400">♥</span>
+          <span>for 小微商户</span>
+        </div>
+      </div>
+    </div>
+  </footer>
+
+  <!-- Mobile Nav (bottom sticky on small screens) -->
+  <div class="fixed bottom-5 left-1/2 -translate-x-1/2 md:hidden z-50">
+    <a href="https://tangyuanjizhang.zaixianapp.cn" target="_blank"
+       class="inline-flex items-center gap-2 bg-brand-600 text-white font-semibold text-sm px-7 py-3 rounded-full shadow-xl shadow-brand-300">
+      <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 10V3L4 14h7v7l9-11h-7z"/></svg>
+      免费使用
+    </a>
   </div>
-</footer>
 
 </body>
 </html>

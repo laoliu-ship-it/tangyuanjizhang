@@ -8,7 +8,10 @@ import (
 	"fandianjizhang/server/internal/dto"
 	"fandianjizhang/server/internal/model"
 	"gorm.io/gorm"
+	"gorm.io/gorm/clause"
 )
+
+var ErrInsufficientCredits = errors.New("积分不足")
 
 // ========== UserRepo ==========
 
@@ -58,6 +61,13 @@ func (r *userRepo) GetByID(ctx context.Context, id uint64) (*model.User, error) 
 		return nil, err
 	}
 	return &user, nil
+}
+
+func (r *userRepo) CountByRegisterIP(ctx context.Context, ip string) (int64, error) {
+	var count int64
+	err := r.db.WithContext(ctx).Model(&model.User{}).
+		Where("register_ip = ? AND deleted_at IS NULL", ip).Count(&count).Error
+	return count, err
 }
 
 // ========== TenantRepo ==========
@@ -958,4 +968,159 @@ func (r *ocrRecordRepo) GetByID(ctx context.Context, id, tenantID uint64) (*mode
 		return nil, err
 	}
 	return &rec, nil
+}
+
+func (r *ocrRecordRepo) GetByHash(ctx context.Context, tenantID uint64, imageHash string) (*model.OcrRecord, error) {
+	if imageHash == "" {
+		return nil, nil
+	}
+	var rec model.OcrRecord
+	err := r.db.WithContext(ctx).
+		Where("tenant_id = ? AND image_hash = ?", tenantID, imageHash).
+		Order("id DESC").
+		First(&rec).Error
+	if err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return nil, nil
+		}
+		return nil, err
+	}
+	return &rec, nil
+}
+
+// ========== TenantCreditsRepo ==========
+
+type tenantCreditsRepo struct {
+	db *gorm.DB
+}
+
+func NewTenantCreditsRepo(db *gorm.DB) TenantCreditsRepo {
+	return &tenantCreditsRepo{db: db}
+}
+
+func (r *tenantCreditsRepo) GetOrCreate(ctx context.Context, tenantID uint64) (*model.TenantCredits, error) {
+	var c model.TenantCredits
+	err := r.db.WithContext(ctx).
+		Where(model.TenantCredits{TenantID: tenantID}).
+		FirstOrCreate(&c).Error
+	if err != nil {
+		return nil, err
+	}
+	return &c, nil
+}
+
+// Deduct 原子扣费：SELECT FOR UPDATE → 检查余额 → 更新余额 → 写流水日志
+func (r *tenantCreditsRepo) Deduct(ctx context.Context, tenantID uint64, cost int64, action, refType string, refID uint64, note string) error {
+	return r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		var c model.TenantCredits
+		// 先确保记录存在，再加行锁
+		if err := tx.Where(model.TenantCredits{TenantID: tenantID}).FirstOrCreate(&c).Error; err != nil {
+			return err
+		}
+		// 重新加锁读取最新值
+		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).
+			Where("tenant_id = ?", tenantID).First(&c).Error; err != nil {
+			return err
+		}
+
+		balanceAfter := int64(-1)
+		if !c.Unlimited {
+			if c.Balance < cost {
+				return ErrInsufficientCredits
+			}
+			c.Balance -= cost
+			balanceAfter = c.Balance
+			if err := tx.Model(&c).Update("balance", c.Balance).Error; err != nil {
+				return err
+			}
+		}
+
+		log := &model.CreditLog{
+			TenantID:     tenantID,
+			Amount:       -cost,
+			Action:       action,
+			BalanceAfter: balanceAfter,
+			RefType:      refType,
+			RefID:        refID,
+			Note:         note,
+		}
+		return tx.Create(log).Error
+	})
+}
+
+// Gift 赠送积分，写流水日志
+func (r *tenantCreditsRepo) Gift(ctx context.Context, tenantID uint64, delta int64, action, note string) error {
+	return r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		var c model.TenantCredits
+		if err := tx.Where(model.TenantCredits{TenantID: tenantID}).FirstOrCreate(&c).Error; err != nil {
+			return err
+		}
+		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).
+			Where("tenant_id = ?", tenantID).First(&c).Error; err != nil {
+			return err
+		}
+
+		c.Balance += delta
+		if err := tx.Model(&c).Update("balance", c.Balance).Error; err != nil {
+			return err
+		}
+
+		log := &model.CreditLog{
+			TenantID:     tenantID,
+			Amount:       delta,
+			Action:       action,
+			BalanceAfter: c.Balance,
+			Note:         note,
+		}
+		return tx.Create(log).Error
+	})
+}
+
+func (r *tenantCreditsRepo) SetUnlimited(ctx context.Context, tenantID uint64, unlimited bool) error {
+	return r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		var c model.TenantCredits
+		if err := tx.Where(model.TenantCredits{TenantID: tenantID}).FirstOrCreate(&c).Error; err != nil {
+			return err
+		}
+		return tx.Model(&c).Updates(map[string]interface{}{
+			"unlimited":  unlimited,
+			"updated_at": time.Now(),
+		}).Error
+	})
+}
+
+func (r *tenantCreditsRepo) ListLogs(ctx context.Context, tenantID uint64, limit int) ([]*model.CreditLog, error) {
+	var logs []*model.CreditLog
+	err := r.db.WithContext(ctx).
+		Where("tenant_id = ?", tenantID).
+		Order("created_at DESC").
+		Limit(limit).
+		Find(&logs).Error
+	return logs, err
+}
+
+func (r *tenantCreditsRepo) ListLogsPaged(ctx context.Context, tenantID uint64, page, size int, amountType string) ([]*model.CreditLog, int64, error) {
+	q := r.db.WithContext(ctx).Model(&model.CreditLog{}).Where("tenant_id = ?", tenantID)
+	switch amountType {
+	case "income":
+		q = q.Where("amount > 0")
+	case "expense":
+		q = q.Where("amount < 0")
+	}
+	var total int64
+	if err := q.Count(&total).Error; err != nil {
+		return nil, 0, err
+	}
+	var logs []*model.CreditLog
+	err := q.Order("created_at DESC").Offset((page - 1) * size).Limit(size).Find(&logs).Error
+	return logs, total, err
+}
+
+func (r *tenantCreditsRepo) ListByTenantIDs(ctx context.Context, tenantIDs []uint64) ([]*model.TenantCredits, error) {
+	if len(tenantIDs) == 0 {
+		return nil, nil
+	}
+	var list []*model.TenantCredits
+	err := r.db.WithContext(ctx).Where("tenant_id IN ?", tenantIDs).Find(&list).Error
+	return list, err
 }

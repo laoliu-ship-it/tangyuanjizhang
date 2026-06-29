@@ -17,6 +17,7 @@ platformApi.interceptors.response.use(
     if (err.response?.status === 401) {
       const url = err.config?.url || ''
       if (!url.includes('/auth/login')) {
+        alert('登录已过期，请重新登录')
         usePlatformAuthStore.getState().logout()
         window.location.href = '/platform/login'
       }
@@ -78,6 +79,50 @@ export interface PlatformConfigListResp {
   items: PlatformConfigItem[]
 }
 
+// ========== 积分系统 ==========
+
+export interface CreditLogItem {
+  id: number
+  amount: number
+  action: string
+  balance_after: number
+  ref_type: string
+  ref_id: number
+  note: string
+  created_at: string
+}
+
+export interface TenantCreditsDetail {
+  tenant_id: number
+  tenant_name: string
+  balance: number
+  unlimited: boolean
+  logs?: CreditLogItem[]
+}
+
+export interface TenantCreditsListResp {
+  items: TenantCreditsDetail[]
+}
+
+// ========== 平台 LLM 配置 ==========
+
+export interface PlatformLLMConfig {
+  enabled: boolean
+  provider: string
+  base_url: string
+  api_key_mask: string
+  model: string
+  mode: string
+}
+
+// ========== 提示词管理 ==========
+
+export interface TenantPromptResp {
+  custom_prompt: string
+  default_prompt: string
+  placeholder: string
+}
+
 export const platformAdminApi = {
   login: (data: { email: string; password: string }) =>
     platformApi.post<ApiResponse<PlatformLoginResp>>('/auth/login', data),
@@ -97,6 +142,39 @@ export const platformAdminApi = {
 
   updateConfig: (key: string, value: string) =>
     platformApi.put<ApiResponse<PlatformConfigItem>>(`/configs/${key}`, { value }),
+
+  // 积分管理
+  listUserTenantCredits: (userId: number) =>
+    platformApi.get<ApiResponse<TenantCreditsListResp>>(`/users/${userId}/tenants/credits`),
+
+  getTenantCredits: (tenantId: number) =>
+    platformApi.get<ApiResponse<TenantCreditsDetail>>(`/tenants/${tenantId}/credits`),
+
+  adjustTenantCredits: (tenantId: number, delta: number, note: string) =>
+    platformApi.post<ApiResponse<TenantCreditsDetail>>(`/tenants/${tenantId}/credits/adjust`, { delta, note }),
+
+  setTenantUnlimited: (tenantId: number, unlimited: boolean) =>
+    platformApi.put<ApiResponse<TenantCreditsDetail>>(`/tenants/${tenantId}/credits/unlimited`, { unlimited }),
+
+  getTenantPrompt: (tenantId: number) =>
+    platformApi.get<ApiResponse<TenantPromptResp>>(`/tenants/${tenantId}/prompt`),
+
+  updateTenantPrompt: (tenantId: number, customPrompt: string) =>
+    platformApi.put<ApiResponse<TenantPromptResp>>(`/tenants/${tenantId}/prompt`, { custom_prompt: customPrompt }),
+
+  // 平台 LLM 配置
+  getPlatformLLMConfig: () =>
+    platformApi.get<ApiResponse<PlatformLLMConfig>>('/llm-config'),
+
+  updatePlatformLLMConfig: (data: {
+    enabled: boolean
+    provider: string
+    base_url: string
+    api_key: string
+    model: string
+    mode: string
+  }) =>
+    platformApi.put<ApiResponse<PlatformLLMConfig>>('/llm-config', data),
 }
 
 export default platformApi

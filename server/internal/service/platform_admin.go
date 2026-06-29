@@ -7,6 +7,7 @@ import (
 
 	"fandianjizhang/server/config"
 	"fandianjizhang/server/internal/dto"
+	"fandianjizhang/server/internal/model"
 	"fandianjizhang/server/internal/repo"
 
 	"github.com/golang-jwt/jwt/v5"
@@ -26,14 +27,24 @@ type PlatformAdminService interface {
 	// 配置管理
 	GetAllConfigs(ctx context.Context) (*dto.PlatformConfigListResp, error)
 	UpdateConfig(ctx context.Context, key, value string) (*dto.PlatformConfigItem, error)
+	// 平台 LLM 配置
+	GetPlatformLLMConfig(ctx context.Context) (*dto.PlatformLLMConfigResp, error)
+	UpdatePlatformLLMConfig(ctx context.Context, req dto.UpdatePlatformLLMConfigReq) (*dto.PlatformLLMConfigResp, error)
+	// 积分管理
+	GetTenantCredits(ctx context.Context, tenantID uint64) (*dto.TenantCreditsDetail, error)
+	AdjustTenantCredits(ctx context.Context, tenantID uint64, req dto.CreditsAdjustReq) (*dto.TenantCreditsDetail, error)
+	SetTenantUnlimited(ctx context.Context, tenantID uint64, unlimited bool) (*dto.TenantCreditsDetail, error)
+	ListUserTenantCredits(ctx context.Context, userID uint64) (*dto.TenantCreditsListResp, error)
 }
 
 type platformAdminService struct {
-	adminRepo  repo.PlatformAdminRepo
-	statsRepo  repo.PlatformStatsRepo
-	userRepo   repo.UserRepo
-	configRepo repo.PlatformConfigRepo
-	cfg        *config.Config
+	adminRepo   repo.PlatformAdminRepo
+	statsRepo   repo.PlatformStatsRepo
+	userRepo    repo.UserRepo
+	configRepo  repo.PlatformConfigRepo
+	tenantRepo  repo.TenantRepo
+	creditsSvc  CreditsService
+	cfg         *config.Config
 }
 
 func NewPlatformAdminService(
@@ -41,6 +52,8 @@ func NewPlatformAdminService(
 	statsRepo repo.PlatformStatsRepo,
 	userRepo repo.UserRepo,
 	configRepo repo.PlatformConfigRepo,
+	tenantRepo repo.TenantRepo,
+	creditsSvc CreditsService,
 	cfg *config.Config,
 ) PlatformAdminService {
 	return &platformAdminService{
@@ -48,6 +61,8 @@ func NewPlatformAdminService(
 		statsRepo:  statsRepo,
 		userRepo:   userRepo,
 		configRepo: configRepo,
+		tenantRepo: tenantRepo,
+		creditsSvc: creditsSvc,
 		cfg:        cfg,
 	}
 }
@@ -186,4 +201,134 @@ func (s *platformAdminService) UpdateConfig(ctx context.Context, key, value stri
 		Description: cfg.Description,
 		UpdatedAt:   cfg.UpdatedAt.Format("2006-01-02 15:04:05"),
 	}, nil
+}
+
+// ========== 平台 LLM 配置管理 ==========
+
+func (s *platformAdminService) GetPlatformLLMConfig(ctx context.Context) (*dto.PlatformLLMConfigResp, error) {
+	get := func(key string) string {
+		if cfg, err := s.configRepo.GetByKey(ctx, key); err == nil && cfg != nil {
+			return cfg.ConfigValue
+		}
+		return ""
+	}
+	return &dto.PlatformLLMConfigResp{
+		Enabled:    get(model.ConfigKeyPlatformLLMEnabled) == "true",
+		Provider:   get(model.ConfigKeyPlatformLLMProvider),
+		BaseURL:    get(model.ConfigKeyPlatformLLMBaseURL),
+		APIKeyMask: maskLLMAPIKey(get(model.ConfigKeyPlatformLLMAPIKey)),
+		Model:      get(model.ConfigKeyPlatformLLMModel),
+		Mode:       get(model.ConfigKeyPlatformLLMMode),
+	}, nil
+}
+
+func (s *platformAdminService) UpdatePlatformLLMConfig(ctx context.Context, req dto.UpdatePlatformLLMConfigReq) (*dto.PlatformLLMConfigResp, error) {
+	set := func(key, value string) error {
+		cfg, err := s.configRepo.GetByKey(ctx, key)
+		if err != nil {
+			return err
+		}
+		if cfg == nil {
+			cfg = &model.PlatformConfig{ConfigKey: key}
+		}
+		cfg.ConfigValue = value
+		return s.configRepo.Upsert(ctx, cfg)
+	}
+	enabled := "false"
+	if req.Enabled {
+		enabled = "true"
+	}
+	if err := set(model.ConfigKeyPlatformLLMEnabled, enabled); err != nil {
+		return nil, err
+	}
+	if req.Provider != "" {
+		if err := set(model.ConfigKeyPlatformLLMProvider, req.Provider); err != nil {
+			return nil, err
+		}
+	}
+	if err := set(model.ConfigKeyPlatformLLMBaseURL, req.BaseURL); err != nil {
+		return nil, err
+	}
+	// 空 APIKey 表示不修改
+	if req.APIKey != "" {
+		if err := set(model.ConfigKeyPlatformLLMAPIKey, req.APIKey); err != nil {
+			return nil, err
+		}
+	}
+	if req.Model != "" {
+		if err := set(model.ConfigKeyPlatformLLMModel, req.Model); err != nil {
+			return nil, err
+		}
+	}
+	if req.Mode != "" {
+		if err := set(model.ConfigKeyPlatformLLMMode, req.Mode); err != nil {
+			return nil, err
+		}
+	}
+	return s.GetPlatformLLMConfig(ctx)
+}
+
+func maskLLMAPIKey(key string) string {
+	if len(key) == 0 {
+		return ""
+	}
+	if len(key) <= 8 {
+		return "****"
+	}
+	return key[:4] + "..." + key[len(key)-4:]
+}
+
+// ========== 积分管理 ==========
+
+func (s *platformAdminService) GetTenantCredits(ctx context.Context, tenantID uint64) (*dto.TenantCreditsDetail, error) {
+	detail, err := s.creditsSvc.GetTenantCredits(ctx, tenantID)
+	if err != nil {
+		return nil, err
+	}
+	if t, err := s.tenantRepo.GetByID(ctx, tenantID); err == nil && t != nil {
+		detail.TenantName = t.Name
+	}
+	return detail, nil
+}
+
+func (s *platformAdminService) AdjustTenantCredits(ctx context.Context, tenantID uint64, req dto.CreditsAdjustReq) (*dto.TenantCreditsDetail, error) {
+	note := req.Note
+	if note == "" {
+		note = "管理员调整"
+	}
+	if err := s.creditsSvc.Gift(ctx, tenantID, req.Delta, "admin_adjust", note); err != nil {
+		return nil, err
+	}
+	return s.GetTenantCredits(ctx, tenantID)
+}
+
+func (s *platformAdminService) SetTenantUnlimited(ctx context.Context, tenantID uint64, unlimited bool) (*dto.TenantCreditsDetail, error) {
+	if err := s.creditsSvc.SetUnlimited(ctx, tenantID, unlimited); err != nil {
+		return nil, err
+	}
+	return s.GetTenantCredits(ctx, tenantID)
+}
+
+func (s *platformAdminService) ListUserTenantCredits(ctx context.Context, userID uint64) (*dto.TenantCreditsListResp, error) {
+	tenants, err := s.tenantRepo.ListByUserID(ctx, userID)
+	if err != nil {
+		return nil, err
+	}
+	tenantIDs := make([]uint64, 0, len(tenants))
+	for _, t := range tenants {
+		tenantIDs = append(tenantIDs, t.ID)
+	}
+	creditsList, err := s.creditsSvc.ListTenantCredits(ctx, tenantIDs)
+	if err != nil {
+		return nil, err
+	}
+	// 填充租户名
+	nameByID := make(map[uint64]string, len(tenants))
+	for _, t := range tenants {
+		nameByID[t.ID] = t.Name
+	}
+	for _, c := range creditsList {
+		c.TenantName = nameByID[c.TenantID]
+	}
+	return &dto.TenantCreditsListResp{Items: creditsList}, nil
 }

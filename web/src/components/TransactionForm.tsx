@@ -154,6 +154,7 @@ export default function TransactionForm({ open, onClose, onSuccess, initialData,
   const ocrQueueRef = useRef<string[]>([])
   const processingRef = useRef(false)
   const filesMapRef = useRef<Map<string, File>>(new Map())  // 同步存文件，避免等待 state 更新
+  const hashesMapRef = useRef<Map<string, string>>(new Map()) // slotId -> originalHash，processQueue 闭包无法读 slots state
 
   // 活跃 slot
   const activeSlot = slots[activeIdx] ?? null
@@ -286,8 +287,8 @@ export default function TransactionForm({ open, onClose, onSuccess, initialData,
       let ocr: OcrAnalyzeResult | null = null
 
       try {
-        const slot = slots.find(s => s.id === id)
-        const res = await uploadApi.ocr(file, slot?.originalHash)
+        const hash = hashesMapRef.current.get(id)
+        const res = await uploadApi.ocr(file, hash)
         const raw = res.data.data as OcrResult
         ocrId = raw.ocr_id ?? 0
         ocr = {
@@ -301,12 +302,9 @@ export default function TransactionForm({ open, onClose, onSuccess, initialData,
           raw_texts: raw.raw_texts,
         }
       } catch (err: unknown) {
-        const axErr = err as { response?: { status?: number; data?: { message?: string } } }
-        if (axErr.response?.status === 403) {
-          const msg = axErr.response.data?.message || '权限不足，无法上传图片'
-          setToast({ text: msg, error: true })
-          setTimeout(() => setToast(null), 3500)
-        }
+        const errMsg = err instanceof Error ? err.message : '识别失败'
+        setToast({ text: errMsg, error: true })
+        setTimeout(() => setToast(null), 3500)
         setSlots(prev => prev.map(s => s.id === id ? { ...s, status: 'error' as SlotStatus } : s))
         filesMapRef.current.delete(id)
         ocrQueueRef.current = ocrQueueRef.current.slice(1)
@@ -519,8 +517,11 @@ export default function TransactionForm({ open, onClose, onSuccess, initialData,
       originalHash: hashes[i],
     }))
 
-    // 同步写入 files map，processQueue 能立即读到文件
-    newSlots.forEach(s => filesMapRef.current.set(s.id, s.file))
+    // 同步写入 files map 和 hashes map，processQueue 能立即读到文件和 hash
+    newSlots.forEach((s, i) => {
+      filesMapRef.current.set(s.id, s.file)
+      hashesMapRef.current.set(s.id, hashes[i])
+    })
     setSlots(prev => {
       const updated = [...prev, ...newSlots]
       // 自动切到第一张新图
@@ -550,7 +551,10 @@ export default function TransactionForm({ open, onClose, onSuccess, initialData,
       status: 'pending' as SlotStatus, ocrResult: null, ocrId: 0, imagePath: '', saved: false, form: defaultForm(),
       originalHash: hashes[i],
     }))
-    newSlots.forEach(s => filesMapRef.current.set(s.id, s.file))
+    newSlots.forEach((s, i) => {
+      filesMapRef.current.set(s.id, s.file)
+      hashesMapRef.current.set(s.id, hashes[i])
+    })
     setSlots(prev => {
       setActiveIdx(prev.length)
       return [...prev, ...newSlots]
@@ -795,6 +799,7 @@ export default function TransactionForm({ open, onClose, onSuccess, initialData,
         await transactionApi.create(payload)
       }
       const count = draftsToSave.length
+      setShowReview(false)
       setToast({ text: `✓ 成功提交 ${count} 笔交易` })
       onSuccess?.()
       // 手机端延迟关闭让 Toast 可见，PC 端也确保提示可见
@@ -1525,7 +1530,9 @@ export default function TransactionForm({ open, onClose, onSuccess, initialData,
                     </div>
                     <div className="flex items-center justify-between mt-0.5">
                       <span className="text-xs text-gray-400 truncate">
-                        {draft.date.slice(0, 10)}
+                        {draft.date ? draft.date.replace('T', ' ').slice(0, 16) : ''}
+                      </span>
+                       <span className="text-xs text-gray-400 truncate">
                         {draft.merchantName && ` · ${draft.merchantName}`}
                       </span>
                       <div className="flex items-center gap-1 flex-shrink-0">
@@ -1848,11 +1855,11 @@ export default function TransactionForm({ open, onClose, onSuccess, initialData,
                   <p className="text-xs text-red-500 font-medium">⚠ 需要选择有效分类</p>
                 )}
                 {(d.merchantName || d.note) && (
-                  <p className="text-xs text-gray-400 truncate">
+                  <p className="text-xs text-gray-500 truncate">
                     {[d.merchantName, d.note].filter(Boolean).join(' · ')}
                   </p>
                 )}
-                <p className="text-xs text-gray-300">{d.date.slice(0, 16).replace('T', ' ')}</p>
+                <p className="text-xs text-gray-500">{d.date.slice(0, 16).replace('T', ' ')}</p>
               </div>
               <div className="flex items-center gap-1 flex-shrink-0">
                 <button
@@ -1892,7 +1899,7 @@ export default function TransactionForm({ open, onClose, onSuccess, initialData,
             </button>
             <button
               type="button"
-              onClick={() => { setShowReview(false); handleBatchSave() }}
+              onClick={() => handleBatchSave()}
               disabled={saving || currentDrafts.length === 0 || currentDrafts.some(d => !d.categoryId || d.categoryId <= 0)}
               className={`flex-1 py-3 text-sm font-semibold rounded-xl transition-colors text-white ${
                 currentDrafts.some(d => !d.categoryId || d.categoryId <= 0)
@@ -2075,7 +2082,7 @@ export default function TransactionForm({ open, onClose, onSuccess, initialData,
             className="flex-1 py-2.5 text-sm text-gray-600 bg-gray-100 hover:bg-gray-200 rounded-xl transition-colors">
             返回修改
           </button>
-          <button type="button" onClick={() => { setShowReview(false); handleBatchSave() }}
+          <button type="button" onClick={() => handleBatchSave()}
             disabled={saving || currentDrafts.some(d => !d.categoryId || d.categoryId <= 0)}
             className={`flex-1 py-2.5 text-sm font-semibold rounded-xl transition-colors text-white ${
               currentDrafts.some(d => !d.categoryId || d.categoryId <= 0)
@@ -2122,17 +2129,13 @@ export default function TransactionForm({ open, onClose, onSuccess, initialData,
         onClick={e => e.stopPropagation()}
         className="max-w-full max-h-full object-contain rounded-lg" />
 
-      {/* 右下角图片信息弹窗 */}
-      <div className="absolute bottom-4 right-4 bg-black/60 text-white px-3 py-2 rounded-lg text-sm"
-        onClick={e => e.stopPropagation()}>
-        <div className="flex flex-col gap-1">
-          <span className="font-medium">{activeSlot.file.name}</span>
-          <span className="text-gray-300">
-            {activeSlot.file.type.split('/')[1]?.toUpperCase() || '未知'} ·
-            {(activeSlot.file.size / 1024).toFixed(1)} KB
-          </span>
+      {/* 右下角图片信息 */}
+      {activeSlot.file.size > 0 && (
+        <div className="absolute bottom-4 right-4 bg-black/60 text-white px-3 py-2 rounded-lg text-sm"
+          onClick={e => e.stopPropagation()}>
+          {activeSlot.file.type.split('/')[1]?.toUpperCase() || '未知'} · {(activeSlot.file.size / 1024).toFixed(1)} KB
         </div>
-      </div>
+      )}
     </div>
   ) : null
 

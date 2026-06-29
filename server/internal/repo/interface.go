@@ -13,6 +13,7 @@ type UserRepo interface {
 	GetByEmail(ctx context.Context, email string) (*model.User, error)
 	GetByUsername(ctx context.Context, username string) (*model.User, error)
 	GetByID(ctx context.Context, id uint64) (*model.User, error)
+	CountByRegisterIP(ctx context.Context, ip string) (int64, error)
 }
 
 // TenantRepo 租户数据仓库接口
@@ -87,6 +88,8 @@ type OcrRecordRepo interface {
 	Create(ctx context.Context, r *model.OcrRecord) error
 	// GetByID 同时校验 tenantID，防止跨租户访问
 	GetByID(ctx context.Context, id, tenantID uint64) (*model.OcrRecord, error)
+	// GetByHash 通过图片 hash 查最近一条 ocr_record，用于去重时复用 ocr_id
+	GetByHash(ctx context.Context, tenantID uint64, imageHash string) (*model.OcrRecord, error)
 }
 
 // TenantLLMConfigRepo 租户 LLM 配置数据仓库接口
@@ -151,4 +154,23 @@ type PlatformConfigRepo interface {
 	GetByKey(ctx context.Context, key string) (*model.PlatformConfig, error)
 	GetAll(ctx context.Context) ([]*model.PlatformConfig, error)
 	Upsert(ctx context.Context, cfg *model.PlatformConfig) error
+}
+
+// TenantCreditsRepo 租户积分数据仓库接口
+type TenantCreditsRepo interface {
+	// GetOrCreate 查询积分余额，不存在时初始化一条 balance=0 的记录
+	GetOrCreate(ctx context.Context, tenantID uint64) (*model.TenantCredits, error)
+	// Deduct 原子扣费：SELECT FOR UPDATE → 检查余额 → 更新 → 写流水日志
+	// unlimited 租户直接写日志（balance_after=-1），不校验余额
+	Deduct(ctx context.Context, tenantID uint64, cost int64, action, refType string, refID uint64, note string) error
+	// Gift 赠送积分（正数 delta），写流水日志
+	Gift(ctx context.Context, tenantID uint64, delta int64, action, note string) error
+	// SetUnlimited 设置/取消无限制白名单
+	SetUnlimited(ctx context.Context, tenantID uint64, unlimited bool) error
+	// ListLogs 查询流水日志（按 created_at 倒序）
+	ListLogs(ctx context.Context, tenantID uint64, limit int) ([]*model.CreditLog, error)
+	// ListLogsPaged 分页查询流水日志；amountType: "income"=正数, "expense"=负数, ""=全部
+	ListLogsPaged(ctx context.Context, tenantID uint64, page, size int, amountType string) ([]*model.CreditLog, int64, error)
+	// ListByTenantIDs 批量查询多个租户的积分余额
+	ListByTenantIDs(ctx context.Context, tenantIDs []uint64) ([]*model.TenantCredits, error)
 }

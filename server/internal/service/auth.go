@@ -3,6 +3,8 @@ package service
 import (
 	"context"
 	"errors"
+	"log"
+	"strconv"
 	"time"
 
 	"fandianjizhang/server/config"
@@ -41,6 +43,8 @@ type authService struct {
 	tenantRepo       repo.TenantRepo
 	tenantMemberRepo repo.TenantMemberRepo
 	categoryRepo     repo.CategoryRepo
+	creditsSvc       CreditsService
+	configRepo       repo.PlatformConfigRepo
 	cfg              *config.Config
 }
 
@@ -49,6 +53,8 @@ func NewAuthService(
 	tenantRepo repo.TenantRepo,
 	tenantMemberRepo repo.TenantMemberRepo,
 	categoryRepo repo.CategoryRepo,
+	creditsSvc CreditsService,
+	configRepo repo.PlatformConfigRepo,
 	cfg *config.Config,
 ) AuthService {
 	return &authService{
@@ -56,6 +62,8 @@ func NewAuthService(
 		tenantRepo:       tenantRepo,
 		tenantMemberRepo: tenantMemberRepo,
 		categoryRepo:     categoryRepo,
+		creditsSvc:       creditsSvc,
+		configRepo:       configRepo,
 		cfg:              cfg,
 	}
 }
@@ -89,6 +97,7 @@ func (s *authService) Register(ctx context.Context, req dto.RegisterReq) (*dto.L
 		Username:     req.Username,
 		Email:        req.Email,
 		PasswordHash: string(hash),
+		RegisterIP:   req.RegisterIP,
 	}
 	if err := s.userRepo.Create(ctx, user); err != nil {
 		return nil, err
@@ -96,8 +105,9 @@ func (s *authService) Register(ctx context.Context, req dto.RegisterReq) (*dto.L
 
 	// 注册时自动创建默认租户
 	tenant := &model.Tenant{
-		Name:    req.Username + "的记账本",
-		OwnerID: user.ID,
+		Name:     req.Username + "的记账本",
+		OwnerID:  user.ID,
+		BookType: req.BookType,
 	}
 	if err := s.tenantRepo.Create(ctx, tenant); err != nil {
 		return nil, err
@@ -115,7 +125,14 @@ func (s *authService) Register(ctx context.Context, req dto.RegisterReq) (*dto.L
 	}
 
 	// 创建默认分类
-	createDefaultCategories(ctx, s.categoryRepo, tenant.ID)
+	createDefaultCategories(ctx, s.categoryRepo, tenant.ID, req.BookType)
+
+	// 新用户赠送积分（同IP超限则跳过）
+	if s.shouldGiftCredits(ctx, req.RegisterIP) {
+		s.giftNewUserCredits(ctx, tenant.ID)
+	} else {
+		log.Printf("[credits] register: IP %s 超过赠送限额，跳过赠送", req.RegisterIP)
+	}
 
 	// 生成 JWT
 	token, err := s.generateToken(user.ID)
@@ -130,6 +147,42 @@ func (s *authService) Register(ctx context.Context, req dto.RegisterReq) (*dto.L
 		Email:    user.Email,
 		Tenants:  []dto.TenantSummary{{ID: tenant.ID, Name: tenant.Name}},
 	}, nil
+}
+
+// shouldGiftCredits 判断该 IP 是否还在赠送限额内，查询失败时放行（不因查询出错而阻止赠送）
+func (s *authService) shouldGiftCredits(ctx context.Context, ip string) bool {
+	if ip == "" {
+		return true
+	}
+	limitCfg, err := s.configRepo.GetByKey(ctx, model.ConfigKeyMaxAccountsPerIP)
+	if err != nil || limitCfg == nil {
+		return true
+	}
+	limit, err := strconv.ParseInt(limitCfg.ConfigValue, 10, 64)
+	if err != nil || limit <= 0 {
+		return true
+	}
+	count, err := s.userRepo.CountByRegisterIP(ctx, ip)
+	if err != nil {
+		return true
+	}
+	return count <= limit
+}
+
+// giftNewUserCredits 从平台配置读取新用户赠送积分数并赠送，失败只记日志不影响注册
+func (s *authService) giftNewUserCredits(ctx context.Context, tenantID uint64) {
+	cfg, err := s.configRepo.GetByKey(ctx, model.ConfigKeyCreditsNewUserGift)
+	if err != nil || cfg == nil {
+		log.Printf("[credits] giftNewUser: config not found, skipping")
+		return
+	}
+	amount, err := strconv.ParseInt(cfg.ConfigValue, 10, 64)
+	if err != nil || amount <= 0 {
+		return
+	}
+	if err := s.creditsSvc.Gift(ctx, tenantID, amount, "gift", "新用户注册赠送"); err != nil {
+		log.Printf("[credits] giftNewUser: tenant=%d error: %v", tenantID, err)
+	}
 }
 
 func (s *authService) Login(ctx context.Context, req dto.LoginReq) (*dto.LoginResp, error) {

@@ -132,7 +132,31 @@ OCR 原文区每行文本支持右键（PC）/点击（移动端）唤起上下�
 
 ---
 
-## 8. Docker 构建策略
+## 8. 积分计费系统
+
+### 数据模型
+
+```
+tenant_credits   — 每租户一条，balance（余额）+ unlimited（白名单免扣）
+credit_logs      — 流水对账表，每次扣减/充值写一条，含 balance_after 快照
+platform_config  — KV 配置表，存积分单价、平台 LLM Key 等可热改的参数
+```
+
+### 扣减点
+
+OCR 上传路径中有两个扣减点（`upload` + `ocr` 各一次），LLM 分析成功后再扣一次（`llm`）。`CheckAndDeduct` 是原子操作：先读余额，不足直接返回 error，足够则扣减并写流水。
+
+### 错误码约定
+
+积分不足返回 `HTTP 200 + code:402`，与其他业务错误保持一致，由 response 拦截器统一捕获。HTTP 非 200 仅保留给协议层错误（401 未认证 → 自动登出，5xx 服务崩溃）。
+
+### 平台管理接口
+
+平台管理员可通过 `/api/platform/tenants/:id/credits/adjust` 充值/扣减积分，通过 `/api/platform/llm/config` 统一配置供租户使用的 LLM。积分单价通过 `platform_config` 表配置，默认值见 `model.DefaultPlatformConfigs`。
+
+---
+
+## 9. Docker 构建策略
 
 - **Go 后端**：使用 `vendor` 模式（`go mod vendor` 预下载），Docker build 中 `go build -mod=vendor`，完全离线无需网络
 - **OCR 服务**：依赖 OrbStack 内置 `proxy.orb.internal:8305` 透传 macOS 系统代理拉取镜像和安装 pip 包；不可将 `http_proxy=127.0.0.1:7890` 直接传入 build args（容器内 127.0.0.1 是容器自身）

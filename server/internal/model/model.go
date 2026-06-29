@@ -10,6 +10,7 @@ type User struct {
 	Username     string     `gorm:"uniqueIndex;size:50;not null" json:"username"`
 	Email        string     `gorm:"uniqueIndex;size:100;not null" json:"email"`
 	PasswordHash string     `gorm:"size:255;not null" json:"-"`
+	RegisterIP   string     `gorm:"size:45;default:''" json:"-"`
 	CreatedAt    time.Time  `json:"created_at"`
 	DeletedAt    *time.Time `gorm:"index" json:"-"`
 }
@@ -21,6 +22,7 @@ type Tenant struct {
 	ID        uint64     `gorm:"primaryKey;autoIncrement" json:"id"`
 	Name      string     `gorm:"size:100;not null" json:"name"`
 	OwnerID   uint64     `gorm:"not null" json:"owner_id"`
+	BookType  string     `gorm:"size:20;not null;default:'restaurant'" json:"book_type"`
 	CreatedAt time.Time  `json:"created_at"`
 	DeletedAt *time.Time `gorm:"index" json:"-"`
 
@@ -29,6 +31,13 @@ type Tenant struct {
 }
 
 func (Tenant) TableName() string { return "tenants" }
+
+// 账本类型枚举
+const (
+	BookTypeRestaurant = "restaurant"
+	BookTypeFamily     = "family"
+	BookTypeStartup    = "startup"
+)
 
 // TenantMember 租户成员表
 type TenantMember struct {
@@ -209,6 +218,22 @@ const (
 	ConfigKeyCacheTTLMinutes = "cache_ttl_minutes" // 缓存分钟数
 	ConfigKeyOCRCacheEnabled = "ocr_cache_enabled" // "true" 或 "false"
 	ConfigKeyLLMCacheEnabled = "llm_cache_enabled" // "true" 或 "false"
+
+	// 积分计费配置键
+	ConfigKeyCreditsPerUpload     = "credits_per_upload"      // 每次上传新文件扣积分
+	ConfigKeyCreditsPerOCR        = "credits_per_ocr"         // 每次 OCR 识别扣积分
+	ConfigKeyCreditsPerLLM        = "credits_per_llm"         // 每次 AI 整理扣积分
+	ConfigKeyCreditsPerGBPerDay   = "credits_per_gb_per_day"  // 每 G 存储每天扣积分（预留）
+	ConfigKeyCreditsNewUserGift   = "credits_new_user_gift"   // 新用户注册赠送积分
+	ConfigKeyMaxAccountsPerIP     = "credits_max_accounts_per_ip" // 同IP最多多少账号可获赠积分
+
+	// 平台 LLM 配置键
+	ConfigKeyPlatformLLMEnabled  = "platform_llm_enabled"   // "true"/"false"
+	ConfigKeyPlatformLLMProvider = "platform_llm_provider"  // "openai"/"azure"等
+	ConfigKeyPlatformLLMBaseURL  = "platform_llm_base_url"  // 自定义端点，空=用默认
+	ConfigKeyPlatformLLMAPIKey   = "platform_llm_api_key"   // 平台 API Key
+	ConfigKeyPlatformLLMModel    = "platform_llm_model"     // e.g. "gpt-4o"
+	ConfigKeyPlatformLLMMode     = "platform_llm_mode"      // "ocr_text"/"image"
 )
 
 // 默认配置值
@@ -220,4 +245,44 @@ var DefaultPlatformConfigs = map[string]struct {
 	ConfigKeyCacheTTLMinutes: {Value: "30", Description: "缓存有效期（分钟）"},
 	ConfigKeyOCRCacheEnabled: {Value: "true", Description: "是否启用 OCR 缓存"},
 	ConfigKeyLLMCacheEnabled: {Value: "true", Description: "是否启用 LLM 缓存"},
+	// 积分计费默认值
+	ConfigKeyCreditsPerUpload:   {Value: "5", Description: "每次上传新文件扣除积分数"},
+	ConfigKeyCreditsPerOCR:      {Value: "10", Description: "每次 OCR 识别扣除积分数"},
+	ConfigKeyCreditsPerLLM:      {Value: "20", Description: "每次 AI 整理扣除积分数"},
+	ConfigKeyCreditsPerGBPerDay: {Value: "50", Description: "每 G 存储每天扣除积分数（预留）"},
+	ConfigKeyCreditsNewUserGift: {Value: "1000", Description: "新用户注册赠送积分数"},
+	ConfigKeyMaxAccountsPerIP:   {Value: "3", Description: "同一 IP 最多多少账号可获赠注册积分（0=不限制）"},
+	// 平台 LLM 配置默认值（空值=未配置）
+	ConfigKeyPlatformLLMEnabled:  {Value: "false", Description: "平台 LLM 是否启用"},
+	ConfigKeyPlatformLLMProvider: {Value: "openai", Description: "平台 LLM Provider（openai/azure等）"},
+	ConfigKeyPlatformLLMBaseURL:  {Value: "", Description: "平台 LLM 自定义 BaseURL（空=使用默认）"},
+	ConfigKeyPlatformLLMAPIKey:   {Value: "", Description: "平台 LLM API Key"},
+	ConfigKeyPlatformLLMModel:    {Value: "gpt-4o", Description: "平台 LLM 默认模型"},
+	ConfigKeyPlatformLLMMode:     {Value: "ocr_text", Description: "平台 LLM 调用模式：ocr_text 或 image"},
 }
+
+// TenantCredits 租户积分余额表（每租户一条）
+type TenantCredits struct {
+	ID        uint64    `gorm:"primaryKey;autoIncrement" json:"id"`
+	TenantID  uint64    `gorm:"uniqueIndex;not null" json:"tenant_id"`
+	Balance   int64     `gorm:"not null;default:0" json:"balance"`     // 当前积分余额
+	Unlimited bool      `gorm:"not null;default:false" json:"unlimited"` // true=无限制白名单
+	UpdatedAt time.Time `json:"updated_at"`
+}
+
+func (TenantCredits) TableName() string { return "tenant_credits" }
+
+// CreditLog 积分流水对账表
+type CreditLog struct {
+	ID           uint64    `gorm:"primaryKey;autoIncrement" json:"id"`
+	TenantID     uint64    `gorm:"not null;index" json:"tenant_id"`
+	Amount       int64     `gorm:"not null" json:"amount"`           // 正=充值/赠送, 负=消耗
+	Action       string    `gorm:"size:30;not null" json:"action"`   // upload/ocr/llm/storage/gift/admin_adjust
+	BalanceAfter int64     `gorm:"not null" json:"balance_after"`    // 操作后余额快照；unlimited 时为 -1
+	RefType      string    `gorm:"size:50;default:''" json:"ref_type"` // 关联资源类型，如 "ocr_record"
+	RefID        uint64    `gorm:"default:0" json:"ref_id"`            // 关联资源 ID
+	Note         string    `gorm:"size:200;default:''" json:"note"`
+	CreatedAt    time.Time `json:"created_at"`
+}
+
+func (CreditLog) TableName() string { return "credit_logs" }

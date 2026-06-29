@@ -18,11 +18,12 @@ import (
 type LLMHandler struct {
 	llmSvc        service.LLMService
 	categorySvc   service.CategoryService
+	creditsSvc    service.CreditsService
 	ocrRecordRepo repo.OcrRecordRepo
 }
 
-func NewLLMHandler(llmSvc service.LLMService, categorySvc service.CategoryService, ocrRecordRepo repo.OcrRecordRepo) *LLMHandler {
-	return &LLMHandler{llmSvc: llmSvc, categorySvc: categorySvc, ocrRecordRepo: ocrRecordRepo}
+func NewLLMHandler(llmSvc service.LLMService, categorySvc service.CategoryService, creditsSvc service.CreditsService, ocrRecordRepo repo.OcrRecordRepo) *LLMHandler {
+	return &LLMHandler{llmSvc: llmSvc, categorySvc: categorySvc, creditsSvc: creditsSvc, ocrRecordRepo: ocrRecordRepo}
 }
 
 // GetConfig 获取租户 LLM 配置
@@ -138,6 +139,14 @@ func (h *LLMHandler) Analyze(c *gin.Context) {
 	}
 
 	log.Printf("[LLM] tenant=%d ocr_id=%d 耗时=%.2fs 成功，建议数=%d", tenantID, req.OcrID, llmDuration.Seconds(), len(suggestions))
+
+	// LLM 成功后扣积分
+	if deductErr := h.creditsSvc.CheckAndDeduct(c.Request.Context(), tenantID, "llm", "ocr_record", req.OcrID, "AI整理"); deductErr != nil {
+		log.Printf("[credits] tenant=%d llm deduct error: %v", tenantID, deductErr)
+		c.JSON(http.StatusOK, dto.Fail(402, "积分不足，请联系管理员充值"))
+		return
+	}
+
 	c.JSON(http.StatusOK, dto.OK(dto.LLMAnalyzeResp{
 		Suggestions: suggestions,
 	}))

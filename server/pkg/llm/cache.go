@@ -41,6 +41,7 @@ type serviceLLM interface {
 	SaveConfig(ctx context.Context, tenantID uint64, req dto.SaveTenantLLMConfigReq) (*dto.TenantLLMConfigResp, error)
 	GetPrompt(ctx context.Context, tenantID uint64) (*dto.TenantPromptResp, error)
 	SavePrompt(ctx context.Context, tenantID uint64, req dto.SaveTenantPromptReq) (*dto.TenantPromptResp, error)
+	InvalidatePlatformClients()
 }
 
 // NewCachedLLMService 创建带缓存的 LLM 服务
@@ -184,4 +185,10 @@ func (c *CachedLLMService) ClearCache() {
 	c.mu.Lock()
 	c.cache = make(map[string]*llmCacheEntry)
 	c.mu.Unlock()
+}
+
+// InvalidatePlatformClients 平台 LLM 配置变更时透传给 inner，并清空分析缓存
+func (c *CachedLLMService) InvalidatePlatformClients() {
+	c.inner.InvalidatePlatformClients()
+	c.ClearCache()
 }

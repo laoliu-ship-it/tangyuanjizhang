@@ -52,7 +52,7 @@ type ServerConfig struct {
 func Load() *Config {
 	return &Config{
 		DB: DBConfig{
-			DSN: getEnv("DB_DSN", "root:password@tcp(localhost:3306)/fandian?charset=utf8mb4&parseTime=True"),
+			DSN: getEnv("DB_DSN", "root:password@tcp(localhost:3306)/fandian?charset=utf8mb4&parseTime=True&loc=Local"),
 		},
 		JWT: JWTConfig{
 			Secret: getEnv("JWT_SECRET", "default_jwt_secret_change_in_production"),

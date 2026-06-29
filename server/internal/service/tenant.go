@@ -55,9 +55,14 @@ func NewTenantService(
 }
 
 func (s *tenantService) Create(ctx context.Context, userID uint64, req dto.CreateTenantReq) (*model.Tenant, error) {
+	bookType := req.BookType
+	if bookType == "" {
+		bookType = model.BookTypeRestaurant
+	}
 	tenant := &model.Tenant{
-		Name:    req.Name,
-		OwnerID: userID,
+		Name:     req.Name,
+		OwnerID:  userID,
+		BookType: bookType,
 	}
 	if err := s.tenantRepo.Create(ctx, tenant); err != nil {
 		return nil, err
@@ -74,7 +79,7 @@ func (s *tenantService) Create(ctx context.Context, userID uint64, req dto.Creat
 	}
 
 	// 创建默认分类
-	createDefaultCategories(ctx, s.categoryRepo, tenant.ID)
+	createDefaultCategories(ctx, s.categoryRepo, tenant.ID, bookType)
 
 	return tenant, nil
 }

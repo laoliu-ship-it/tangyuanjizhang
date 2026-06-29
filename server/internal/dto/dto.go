@@ -19,9 +19,11 @@ func Fail(code int, message string) Response {
 // ========== 认证 ==========
 
 type RegisterReq struct {
-	Username string `json:"username" binding:"required,min=2,max=50"`
-	Email    string `json:"email" binding:"required,email"`
-	Password string `json:"password" binding:"required,min=6"`
+	Username   string `json:"username" binding:"required,min=2,max=50"`
+	Email      string `json:"email" binding:"required,email"`
+	Password   string `json:"password" binding:"required,min=6"`
+	BookType   string `json:"book_type" binding:"required,oneof=restaurant family startup"`
+	RegisterIP string `json:"-"`
 }
 
 type LoginReq struct {
@@ -45,7 +47,8 @@ type LoginResp struct {
 // ========== 租户 ==========
 
 type CreateTenantReq struct {
-	Name string `json:"name" binding:"required,min=1,max=100"`
+	Name     string `json:"name"      binding:"required,min=1,max=100"`
+	BookType string `json:"book_type" binding:"omitempty,oneof=restaurant family startup"`
 }
 
 type UpdateTenantReq struct {
@@ -484,4 +487,80 @@ type PlatformConfigListResp struct {
 
 type PlatformConfigUpdateReq struct {
 	Value string `json:"value" binding:"required"`
+}
+
+// PlatformLLMConfigResp 平台管理员查看/更新平台 LLM 配置的响应
+type PlatformLLMConfigResp struct {
+	Enabled    bool   `json:"enabled"`
+	Provider   string `json:"provider"`
+	BaseURL    string `json:"base_url"`
+	APIKeyMask string `json:"api_key_mask"`
+	Model      string `json:"model"`
+	Mode       string `json:"mode"`
+}
+
+// UpdatePlatformLLMConfigReq 更新平台 LLM 配置请求
+// APIKey 为空串表示不修改，非空则更新
+type UpdatePlatformLLMConfigReq struct {
+	Enabled  bool   `json:"enabled"`
+	Provider string `json:"provider"`
+	BaseURL  string `json:"base_url"`
+	APIKey   string `json:"api_key"`
+	Model    string `json:"model"`
+	Mode     string `json:"mode"`
+}
+
+// ========== 积分系统 ==========
+
+// CreditLogItem 单条积分流水
+type CreditLogItem struct {
+	ID           uint64 `json:"id"`
+	Amount       int64  `json:"amount"`        // 正=入账, 负=消耗
+	Action       string `json:"action"`        // upload/ocr/llm/gift/admin_adjust
+	BalanceAfter int64  `json:"balance_after"` // -1 表示 unlimited
+	RefType      string `json:"ref_type"`
+	RefID        uint64 `json:"ref_id"`
+	Note         string `json:"note"`
+	CreatedAt    string `json:"created_at"`
+}
+
+// CreditsResp 租户查询自己积分的响应
+type CreditsResp struct {
+	TenantID  uint64           `json:"tenant_id"`
+	Balance   int64            `json:"balance"`
+	Unlimited bool             `json:"unlimited"`
+	Logs      []*CreditLogItem `json:"logs"`
+}
+
+// TenantCreditsDetail 平台管理员查看租户积分详情
+type TenantCreditsDetail struct {
+	TenantID   uint64           `json:"tenant_id"`
+	TenantName string           `json:"tenant_name,omitempty"`
+	Balance    int64            `json:"balance"`
+	Unlimited  bool             `json:"unlimited"`
+	Logs       []*CreditLogItem `json:"logs,omitempty"`
+}
+
+// CreditsAdjustReq 管理员调整积分请求
+type CreditsAdjustReq struct {
+	Delta int64  `json:"delta" binding:"required"` // 正=充值, 负=扣减
+	Note  string `json:"note"`
+}
+
+// CreditsUnlimitedReq 管理员设置无限制请求
+type CreditsUnlimitedReq struct {
+	Unlimited bool `json:"unlimited"`
+}
+
+// TenantCreditsListResp 用户详情页中的租户积分列表
+type TenantCreditsListResp struct {
+	Items []*TenantCreditsDetail `json:"items"`
+}
+
+// CreditLogsPageResp 积分流水分页查询响应
+type CreditLogsPageResp struct {
+	Total int64            `json:"total"`
+	Page  int              `json:"page"`
+	Size  int              `json:"size"`
+	Logs  []*CreditLogItem `json:"logs"`
 }

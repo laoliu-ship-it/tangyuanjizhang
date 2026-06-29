@@ -157,12 +157,6 @@ export default function LLMSettings() {
                 <div>
                   <p className="text-sm font-medium text-gray-700">使用平台提供的 AI</p>
                   <p className="text-xs text-gray-400">无需配置，直接使用平台统一服务</p>
-                  {/* 平台未配置时的警告 */}
-                  {usePlatform && config && !config.platform_enabled && (
-                    <p className="text-xs text-amber-600 bg-amber-50 rounded-lg px-3 py-2 mt-2 border border-amber-200">
-                      平台暂未开放 AI 分析功能，请联系管理员，或切换为自定义配置。
-                    </p>
-                  )}
                 </div>
               </label>
               <label className="flex items-start gap-3 cursor-pointer">

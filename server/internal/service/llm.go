@@ -3,6 +3,7 @@ package service
 import (
 	"context"
 	"fmt"
+	"log"
 	"strings"
 	"sync"
 
@@ -25,22 +26,86 @@ type LLMService interface {
 	GetPrompt(ctx context.Context, tenantID uint64) (*dto.TenantPromptResp, error)
 	// SavePrompt 保存租户自定义识别提示词，传空串恢复平台默认
 	SavePrompt(ctx context.Context, tenantID uint64, req dto.SaveTenantPromptReq) (*dto.TenantPromptResp, error)
+	// InvalidatePlatformClients 平台 LLM 配置变更后清除所有使用平台配置的租户缓存
+	InvalidatePlatformClients()
 }
 
 type llmService struct {
-	platformCfg config.LLMConfig
-	repo        repo.TenantLLMConfigRepo
+	platformCfg    config.LLMConfig
+	repo           repo.TenantLLMConfigRepo
+	platformCfgRepo repo.PlatformConfigRepo
 
 	// 每租户缓存的 LLM 客户端，避免每次请求重建连接
 	mu      sync.RWMutex
 	clients map[uint64]*pkgllm.Client // nil 表示不可用
 }
 
-func NewLLMService(platformCfg config.LLMConfig, r repo.TenantLLMConfigRepo) LLMService {
+func NewLLMService(platformCfg config.LLMConfig, r repo.TenantLLMConfigRepo, platformCfgRepo repo.PlatformConfigRepo) LLMService {
 	return &llmService{
-		platformCfg: platformCfg,
-		repo:        r,
-		clients:     make(map[uint64]*pkgllm.Client),
+		platformCfg:     platformCfg,
+		repo:            r,
+		platformCfgRepo: platformCfgRepo,
+		clients:         make(map[uint64]*pkgllm.Client),
+	}
+}
+
+// InvalidatePlatformClients 清除所有租户客户端缓存，平台配置变更时调用
+func (s *llmService) InvalidatePlatformClients() {
+	s.mu.Lock()
+	s.clients = make(map[uint64]*pkgllm.Client)
+	s.mu.Unlock()
+}
+
+// loadPlatformLLMConfig 从 DB 读平台 LLM 配置，不存在则回退到静态配置
+func (s *llmService) loadPlatformLLMConfig(ctx context.Context) config.LLMConfig {
+	if s.platformCfgRepo == nil {
+		log.Printf("[LLM] loadPlatformLLMConfig: platformCfgRepo is nil, using static config (enabled=%v apiKey=%v)", s.platformCfg.Enabled, s.platformCfg.APIKey != "")
+		return s.platformCfg
+	}
+	get := func(key string) string {
+		cfg, err := s.platformCfgRepo.GetByKey(ctx, key)
+		if err != nil {
+			log.Printf("[LLM] loadPlatformLLMConfig: GetByKey(%s) error: %v", key, err)
+			return ""
+		}
+		if cfg == nil {
+			log.Printf("[LLM] loadPlatformLLMConfig: GetByKey(%s) = nil (key not found)", key)
+			return ""
+		}
+		log.Printf("[LLM] loadPlatformLLMConfig: GetByKey(%s) = %q", key, cfg.ConfigValue)
+		return cfg.ConfigValue
+	}
+	enabled := get(model.ConfigKeyPlatformLLMEnabled) == "true"
+	apiKey := get(model.ConfigKeyPlatformLLMAPIKey)
+	if apiKey == "" {
+		apiKey = s.platformCfg.APIKey
+	}
+	provider := get(model.ConfigKeyPlatformLLMProvider)
+	if provider == "" {
+		provider = s.platformCfg.Provider
+	}
+	baseURL := get(model.ConfigKeyPlatformLLMBaseURL)
+	if baseURL == "" {
+		baseURL = s.platformCfg.BaseURL
+	}
+	modelName := get(model.ConfigKeyPlatformLLMModel)
+	if modelName == "" {
+		modelName = s.platformCfg.Model
+	}
+	mode := get(model.ConfigKeyPlatformLLMMode)
+	if mode == "" {
+		mode = s.platformCfg.Mode
+	}
+	log.Printf("[LLM] loadPlatformLLMConfig: result enabled=%v provider=%s model=%s apiKey=%v baseURL=%q mode=%s",
+		enabled, provider, modelName, apiKey != "", baseURL, mode)
+	return config.LLMConfig{
+		Enabled:        enabled,
+		Provider:       provider,
+		BaseURL:        baseURL,
+		APIKey:         apiKey,
+		Model:          modelName,
+		Mode:           mode,
+		TimeoutSeconds: s.platformCfg.TimeoutSeconds,
 	}
 }
 
@@ -61,11 +126,12 @@ func (s *llmService) GetConfig(ctx context.Context, tenantID uint64) (*dto.Tenan
 	if err != nil {
 		return nil, err
 	}
-	platformEnabled := s.platformCfg.Enabled && s.platformCfg.APIKey != ""
+	platformCfg := s.loadPlatformLLMConfig(ctx)
+	platformEnabled := platformCfg.Enabled && platformCfg.APIKey != ""
 	if cfg == nil {
 		return &dto.TenantLLMConfigResp{
 			TenantID:        tenantID,
-			Enabled:         false,
+			Enabled:         true,
 			UsePlatform:     true,
 			PlatformEnabled: platformEnabled,
 			Provider:        "openai",
@@ -123,7 +189,8 @@ func (s *llmService) SaveConfig(ctx context.Context, tenantID uint64, req dto.Sa
 	delete(s.clients, tenantID)
 	s.mu.Unlock()
 
-	platformEnabled := s.platformCfg.Enabled && s.platformCfg.APIKey != ""
+	platformCfg := s.loadPlatformLLMConfig(ctx)
+	platformEnabled := platformCfg.Enabled && platformCfg.APIKey != ""
 	return toConfigResp(&cfg, platformEnabled), nil
 }
 
@@ -202,13 +269,27 @@ func (s *llmService) getOrBuildClient(ctx context.Context, tenantID uint64) (*pk
 		return nil, err
 	}
 
+	// nil 配置视为"已启用 + 使用平台"（新租户默认行为）
+	if tenantCfg == nil {
+		log.Printf("[LLM] tenant=%d 无自定义配置，使用平台默认", tenantID)
+		tenantCfg = &model.TenantLLMConfig{
+			TenantID:    tenantID,
+			Enabled:     true,
+			UsePlatform: true,
+		}
+	} else {
+		log.Printf("[LLM] tenant=%d 配置: enabled=%v use_platform=%v apiKey=%v", tenantID, tenantCfg.Enabled, tenantCfg.UsePlatform, tenantCfg.APIKey != "")
+	}
+
+	platformCfg := s.loadPlatformLLMConfig(ctx)
 	var client *pkgllm.Client
 
-	if tenantCfg != nil && tenantCfg.Enabled {
+	if tenantCfg.Enabled {
 		if tenantCfg.UsePlatform {
+			log.Printf("[LLM] tenant=%d 使用平台配置: platform.enabled=%v platform.apiKey=%v", tenantID, platformCfg.Enabled, platformCfg.APIKey != "")
 			// 平台可用时优先用平台；平台不可用但租户有自己的 key 时自动降级
-			if s.platformCfg.Enabled && s.platformCfg.APIKey != "" {
-				client, err = pkgllm.NewClientFromConfig(s.platformCfg)
+			if platformCfg.Enabled && platformCfg.APIKey != "" {
+				client, err = pkgllm.NewClientFromConfig(platformCfg)
 			} else if tenantCfg.APIKey != "" {
 				client, err = pkgllm.NewClient(config.LLMConfig{
 					Enabled:        true,
@@ -217,7 +298,7 @@ func (s *llmService) getOrBuildClient(ctx context.Context, tenantID uint64) (*pk
 					APIKey:         tenantCfg.APIKey,
 					Model:          tenantCfg.Model,
 					Mode:           tenantCfg.Mode,
-					TimeoutSeconds: s.platformCfg.TimeoutSeconds,
+					TimeoutSeconds: platformCfg.TimeoutSeconds,
 				})
 			} else {
 				return nil, fmt.Errorf("平台暂未开放 AI 分析功能，请联系管理员或使用自定义 API Key")
@@ -234,7 +315,7 @@ func (s *llmService) getOrBuildClient(ctx context.Context, tenantID uint64) (*pk
 				APIKey:         tenantCfg.APIKey,
 				Model:          tenantCfg.Model,
 				Mode:           tenantCfg.Mode,
-				TimeoutSeconds: s.platformCfg.TimeoutSeconds,
+				TimeoutSeconds: platformCfg.TimeoutSeconds,
 			})
 		}
 		if err != nil {

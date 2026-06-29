@@ -416,7 +416,7 @@ export default function Transactions() {
                       {t.note || '-'}
                     </td>
                     <td className="px-5 py-3.5 text-gray-600">
-                      {dayjs(t.transaction_date).format('YYYY-MM-DD HH:mm')}
+                      {dayjs(t.transaction_date.slice(0, 16).replace(' ', 'T')).format('YYYY-MM-DD HH:mm')}
                     </td>
                     <td className="px-5 py-3.5">
                       <div className="flex items-center justify-center gap-3">
@@ -477,7 +477,7 @@ export default function Transactions() {
                   </div>
                   <div className="flex items-center justify-between mt-1">
                     <span className="text-xs text-gray-400">
-                      {dayjs(t.transaction_date).format('MM-DD HH:mm')}
+                      {dayjs(t.transaction_date.slice(0, 16).replace(' ', 'T')).format('MM-DD HH:mm')}
                       {t.note && ` · ${t.note}`}
                     </span>
                     <span className="text-xs text-gray-300">

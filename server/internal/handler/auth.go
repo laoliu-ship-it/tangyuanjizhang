@@ -26,6 +26,7 @@ func (h *AuthHandler) Register(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, dto.Fail(400, "参数错误: "+err.Error()))
 		return
 	}
+	req.RegisterIP = c.ClientIP()
 
 	resp, err := h.authSvc.Register(c.Request.Context(), req)
 	if err != nil {

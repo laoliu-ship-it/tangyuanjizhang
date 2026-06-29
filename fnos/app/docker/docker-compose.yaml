@@ -6,7 +6,7 @@ services:
     ports:
       - "8090:8080"
     environment:
-      DB_DSN: root:allgood@tcp(host.docker.internal:3306)/fandian?charset=utf8mb4&parseTime=True
+      DB_DSN: root:allgood@tcp(host.docker.internal:3306)/fandian?charset=utf8mb4&parseTime=True&loc=Asia%2FShanghai
       JWT_SECRET: ${JWT_SECRET:-please_change_this_secret}
       OCR_ENGINE: rapidocr
       OCR_RAPIDOCR_URL: http://fandianjizhang-ocr:8001/ocr

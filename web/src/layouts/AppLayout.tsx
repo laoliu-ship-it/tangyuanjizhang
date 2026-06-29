@@ -1,7 +1,11 @@
 import { Outlet, NavLink, useNavigate } from 'react-router-dom'
+import { useEffect, useState } from 'react'
 import { useResponsive } from '../hooks/useResponsive'
 import { useAuth } from '../hooks/useAuth'
 import TenantSwitcher from '../components/TenantSwitcher'
+import { creditsApi, type CreditsResp } from '../services/api'
+import { useTenantStore } from '../store/tenant'
+import Credits from '../pages/TenantSettings/Credits'
 
 interface NavItem {
   to: string
@@ -64,6 +68,70 @@ const navItems: NavItem[] = [
   },
 ]
 
+function CreditsModal({ onClose }: { onClose: () => void }) {
+  return (
+    <div
+      className="fixed inset-0 z-50 flex items-center justify-center bg-black/40"
+      onClick={onClose}
+    >
+      <div
+        className="bg-gray-50 rounded-2xl shadow-xl w-full max-w-md mx-4 max-h-[80vh] flex flex-col"
+        onClick={e => e.stopPropagation()}
+      >
+        <div className="flex items-center justify-between px-5 py-4 border-b border-gray-100 bg-white rounded-t-2xl">
+          <h2 className="text-base font-semibold text-gray-800">积分明细</h2>
+          <button
+            onClick={onClose}
+            className="text-gray-400 hover:text-gray-600 transition-colors"
+          >
+            <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+            </svg>
+          </button>
+        </div>
+        <div className="flex-1 overflow-y-auto p-4">
+          <Credits />
+        </div>
+      </div>
+    </div>
+  )
+}
+
+function CreditsDisplay() {
+  const [credits, setCredits] = useState<CreditsResp | null>(null)
+  const [open, setOpen] = useState(false)
+  const currentTenantId = useTenantStore(s => s.currentTenantId)
+
+  useEffect(() => {
+    if (!currentTenantId) return
+    creditsApi.getBalance()
+      .then(res => setCredits(res.data.data))
+      .catch(() => {})
+  }, [currentTenantId])
+
+  if (!credits) return null
+
+  return (
+    <>
+      <button
+        type="button"
+        onClick={() => setOpen(true)}
+        className="flex items-center gap-1.5 text-xs text-gray-400 hover:text-blue-500 transition-colors cursor-pointer"
+      >
+        <svg className="w-3.5 h-3.5 text-yellow-400" fill="currentColor" viewBox="0 0 24 24">
+          <circle cx="12" cy="12" r="10" />
+          <text x="12" y="16" textAnchor="middle" fill="white" fontSize="11" fontWeight="bold">C</text>
+        </svg>
+        <span className="font-medium">
+          {credits.unlimited ? '∞' : credits.balance.toLocaleString()}
+        </span>
+        <span>积分</span>
+      </button>
+      {open && <CreditsModal onClose={() => setOpen(false)} />}
+    </>
+  )
+}
+
 export default function AppLayout() {
   const { isMobile } = useResponsive()
   const { username, logout } = useAuth()
@@ -80,7 +148,10 @@ export default function AppLayout() {
         {/* 移动端顶部栏 */}
         <header className="bg-white border-b border-gray-100 px-4 py-3 flex items-center justify-between flex-shrink-0">
           <span className="text-lg font-bold text-blue-600">汤圆记账</span>
-          <TenantSwitcher />
+          <div className="flex items-center gap-3">
+            <CreditsDisplay />
+            <TenantSwitcher />
+          </div>
         </header>
 
         {/* 内容区域 */}
@@ -120,7 +191,10 @@ export default function AppLayout() {
         {/* Logo */}
         <div className="px-6 py-5 border-b border-gray-100">
           <h1 className="text-xl font-bold text-blue-600">汤圆记账</h1>
-          <p className="text-xs text-gray-400 mt-0.5">专业记账管理工具</p>
+          <div className="flex items-center justify-between mt-1">
+            <p className="text-xs text-gray-400">专业记账管理工具</p>
+            <CreditsDisplay />
+          </div>
         </div>
 
         {/* 租户切换 */}
