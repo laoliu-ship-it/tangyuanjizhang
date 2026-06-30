@@ -1023,6 +1023,19 @@ func (r *tenantCreditsRepo) Deduct(ctx context.Context, tenantID uint64, cost in
 			return err
 		}
 
+		// 幂等检查：同一资源同一动作已扣过则直接跳过
+		if refType != "" && refID != 0 {
+			var count int64
+			if err := tx.Model(&model.CreditLog{}).
+				Where("tenant_id = ? AND action = ? AND ref_type = ? AND ref_id = ?",
+					tenantID, action, refType, refID).Count(&count).Error; err != nil {
+				return err
+			}
+			if count > 0 {
+				return nil
+			}
+		}
+
 		balanceAfter := int64(-1)
 		if !c.Unlimited {
 			if c.Balance < cost {

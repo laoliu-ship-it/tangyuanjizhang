@@ -69,17 +69,23 @@ func (h *OCRHandler) Upload(c *gin.Context) {
 	originalHash := c.Request.FormValue("original_hash")
 	if originalHash == "" {
 		hasher := sha256.New()
-		if _, herr := io.Copy(hasher, file); herr == nil {
-			originalHash = hex.EncodeToString(hasher.Sum(nil))
+		if _, herr := io.Copy(hasher, file); herr != nil {
+			c.JSON(http.StatusInternalServerError, dto.Fail(500, "读取文件失败"))
+			return
 		}
+		originalHash = hex.EncodeToString(hasher.Sum(nil))
 		if _, serr := file.Seek(0, io.SeekStart); serr != nil {
 			c.JSON(http.StatusInternalServerError, dto.Fail(500, "读取文件失败"))
 			return
 		}
 	}
+	if originalHash == "" {
+		c.JSON(http.StatusBadRequest, dto.Fail(400, "文件 hash 不能为空"))
+		return
+	}
 
 	// 去重检查：hash 命中 media_file，说明已上传过，不重复扣 upload+ocr
-	if originalHash != "" {
+	{
 		existing, err := h.mediaRepo.GetByHash(c.Request.Context(), tenantID, originalHash)
 		if err != nil {
 			log.Printf("[OCR] tenant=%d media lookup error: %v", tenantID, err)
@@ -118,7 +124,7 @@ func (h *OCRHandler) Upload(c *gin.Context) {
 	}
 
 	// 记录媒体文件
-	if originalHash != "" {
+	{
 		fileSize := header.Size
 		if fileSize == 0 {
 			fileSize = -1
@@ -223,9 +229,13 @@ func (h *OCRHandler) Analyze(c *gin.Context) {
 	}
 
 	originalHash := c.Request.FormValue("original_hash")
+	if originalHash == "" {
+		c.JSON(http.StatusBadRequest, dto.Fail(400, "original_hash 不能为空"))
+		return
+	}
 
 	// 去重检查
-	if originalHash != "" {
+	{
 		existing, err := h.mediaRepo.GetByHash(c.Request.Context(), tenantID, originalHash)
 		if err != nil {
 			log.Printf("[OCR] tenant=%d media lookup error: %v", tenantID, err)
@@ -287,19 +297,16 @@ func (h *OCRHandler) Analyze(c *gin.Context) {
 	}
 
 	// 记录媒体文件
-	if originalHash != "" {
-		fileSize := header.Size
-		mf := &model.MediaFile{
-			TenantID:     tenantID,
-			OriginalHash: originalHash,
-			FileName:     header.Filename,
-			FilePath:     savedPath,
-			FileSize:     fileSize,
-			MimeType:     header.Header.Get("Content-Type"),
-		}
-		if err := h.mediaRepo.Create(c.Request.Context(), mf); err != nil {
-			log.Printf("[OCR] tenant=%d failed to create media record: %v", tenantID, err)
-		}
+	mf := &model.MediaFile{
+		TenantID:     tenantID,
+		OriginalHash: originalHash,
+		FileName:     header.Filename,
+		FilePath:     savedPath,
+		FileSize:     header.Size,
+		MimeType:     header.Header.Get("Content-Type"),
+	}
+	if err := h.mediaRepo.Create(c.Request.Context(), mf); err != nil {
+		log.Printf("[OCR] tenant=%d failed to create media record: %v", tenantID, err)
 	}
 
 	// === OCR 识别 ===
@@ -341,13 +348,30 @@ func (h *OCRHandler) Analyze(c *gin.Context) {
 
 	rawTexts := extractRawTextStrings(ocrResult.RawTexts)
 
+	// 写入 ocr_records，供扣费关联和后续追溯使用
+	rawTextsJSON, _ := json.Marshal(rawTexts)
+	ocrRec := &model.OcrRecord{
+		TenantID:     tenantID,
+		ImagePath:    savedPath,
+		ImageHash:    originalHash,
+		ImageSize:    header.Size,
+		AIMode:       ocrResult.AIMode,
+		Amount:       ocrResult.Amount,
+		Date:         ocrResult.Date,
+		MerchantName: merchantName,
+		RawTexts:     string(rawTextsJSON),
+	}
+	if err := h.ocrRecordRepo.Create(c.Request.Context(), ocrRec); err != nil {
+		log.Printf("[OCR] tenant=%d failed to create ocr_record: %v", tenantID, err)
+	}
+
 	// 新文件：OCR 成功后扣 upload + ocr（失败已在上方 return，不会到这里）
-	if deductErr := h.creditsSvc.CheckAndDeduct(c.Request.Context(), tenantID, "upload", "", 0, "图片上传"); deductErr != nil {
+	if deductErr := h.creditsSvc.CheckAndDeduct(c.Request.Context(), tenantID, "upload", "ocr_record", ocrRec.ID, "图片上传"); deductErr != nil {
 		log.Printf("[credits] tenant=%d upload deduct error: %v", tenantID, deductErr)
 		c.JSON(http.StatusOK, dto.Fail(402, "积分不足，请联系管理员充值"))
 		return
 	}
-	if deductErr := h.creditsSvc.CheckAndDeduct(c.Request.Context(), tenantID, "ocr", "", 0, "OCR识别"); deductErr != nil {
+	if deductErr := h.creditsSvc.CheckAndDeduct(c.Request.Context(), tenantID, "ocr", "ocr_record", ocrRec.ID, "OCR识别"); deductErr != nil {
 		log.Printf("[credits] tenant=%d ocr deduct error: %v", tenantID, deductErr)
 		c.JSON(http.StatusOK, dto.Fail(402, "积分不足，请联系管理员充值"))
 		return
@@ -371,7 +395,7 @@ func (h *OCRHandler) Analyze(c *gin.Context) {
 				tenantID, i, s.Type, s.Amount, s.CategoryID, s.CategoryHint, s.MerchantName, s.Date)
 		}
 		// LLM 成功后才扣 llm 积分
-		if deductErr := h.creditsSvc.CheckAndDeduct(c.Request.Context(), tenantID, "llm", "", 0, "AI整理"); deductErr != nil {
+		if deductErr := h.creditsSvc.CheckAndDeduct(c.Request.Context(), tenantID, "llm", "ocr_record", ocrRec.ID, "AI整理"); deductErr != nil {
 			log.Printf("[credits] tenant=%d llm deduct error (non-fatal): %v", tenantID, deductErr)
 		}
 	}
