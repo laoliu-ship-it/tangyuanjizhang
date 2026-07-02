@@ -140,6 +140,10 @@ type BatchCreateTransactionReq struct {
 	Transactions []CreateTransactionReq `json:"transactions" binding:"required,min=1"`
 }
 
+type BatchDeleteTransactionReq struct {
+	IDs []uint64 `json:"ids" binding:"required,min=1"`
+}
+
 type TransactionFilter struct {
 	Type        string `form:"type"`
 	CategoryID  uint64 `form:"category_id"`

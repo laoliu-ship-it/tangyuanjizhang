@@ -359,6 +359,15 @@ func (r *transactionRepo) Delete(ctx context.Context, id, tenantID uint64) error
 		Update("deleted_at", now).Error
 }
 
+func (r *transactionRepo) BatchDelete(ctx context.Context, ids []uint64, tenantID uint64) (int64, error) {
+	now := time.Now()
+	result := r.db.WithContext(ctx).
+		Model(&model.Transaction{}).
+		Where("id IN ? AND tenant_id = ? AND deleted_at IS NULL", ids, tenantID).
+		Update("deleted_at", now)
+	return result.RowsAffected, result.Error
+}
+
 func (r *transactionRepo) GetByID(ctx context.Context, id, tenantID uint64) (*model.Transaction, error) {
 	var tx model.Transaction
 	err := r.db.WithContext(ctx).

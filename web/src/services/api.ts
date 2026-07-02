@@ -326,6 +326,8 @@ export const transactionApi = {
   update: (id: number, data: TransactionCreatePayload) =>
     api.put<ApiResponse<Transaction>>(`/transactions/${id}`, data),
   delete: (id: number) => api.delete<ApiResponse<null>>(`/transactions/${id}`),
+  batchDelete: (ids: number[]) =>
+    api.delete<ApiResponse<number>>('/transactions/batch', { data: { ids } }),
 }
 
 // 统计

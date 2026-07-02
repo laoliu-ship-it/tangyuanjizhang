@@ -301,6 +301,10 @@ func main() {
 		tenant.PUT("/transactions/:id",
 			middleware.Casbin(enforcerPool, "transaction", "write"),
 			transactionHandler.Update)
+		// 交易记录批量删除（editor 及以上）
+		tenant.DELETE("/transactions/batch",
+			middleware.Casbin(enforcerPool, "transaction", "write"),
+			transactionHandler.BatchDelete)
 		// 交易记录删除（editor 及以上）
 		tenant.DELETE("/transactions/:id",
 			middleware.Casbin(enforcerPool, "transaction", "write"),

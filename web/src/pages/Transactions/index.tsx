@@ -9,7 +9,7 @@ import TransactionForm from '../../components/TransactionForm'
 import CategoryIcon from '../../components/CategoryIcon'
 import ImportMappingDialog from '../../components/ImportMappingDialog'
 
-const PAGE_SIZE = 10
+const PAGE_SIZE_OPTIONS = [10, 20, 50] as const
 
 export default function Transactions() {
   const { isMobile } = useResponsive()
@@ -19,6 +19,7 @@ export default function Transactions() {
   const [transactions, setTransactions] = useState<Transaction[]>([])
   const [total, setTotal] = useState(0)
   const [page, setPage] = useState(1)
+  const [pageSize, setPageSize] = useState<number>(PAGE_SIZE_OPTIONS[0])
   const [loading, setLoading] = useState(false)
 
   const [filterType, setFilterType] = useState('')
@@ -34,6 +35,10 @@ export default function Transactions() {
   const [deletingId, setDeletingId] = useState<number | null>(null)
   const [deleteConfirmId, setDeleteConfirmId] = useState<number | null>(null)
   const [detailTarget, setDetailTarget] = useState<Transaction | null>(null)
+
+  const [selectedIds, setSelectedIds] = useState<Set<number>>(new Set())
+  const [batchDeleting, setBatchDeleting] = useState(false)
+  const [batchDeleteConfirmOpen, setBatchDeleteConfirmOpen] = useState(false)
 
   const fileImportRef = useRef<HTMLInputElement>(null)
   const [importDialogOpen, setImportDialogOpen] = useState(false)
@@ -60,7 +65,7 @@ export default function Transactions() {
     try {
       const res = await transactionApi.list({
         page: p,
-        page_size: PAGE_SIZE,
+        page_size: pageSize,
         type: filterType || undefined,
         category_id: filterCategoryId || undefined,
         start_date: filterStartDate || undefined,
@@ -74,11 +79,17 @@ export default function Transactions() {
     } finally {
       setLoading(false)
     }
-  }, [page, filterType, filterCategoryId, filterStartDate, filterEndDate, sortBy])
+  }, [page, pageSize, filterType, filterCategoryId, filterStartDate, filterEndDate, sortBy])
 
   useEffect(() => {
     loadTransactions(page)
+    setSelectedIds(new Set())
   }, [loadTransactions, page])
+
+  function handlePageSizeChange(size: number) {
+    setPageSize(size)
+    setPage(1)
+  }
 
   function handleSearch() {
     setPage(1)
@@ -109,6 +120,35 @@ export default function Transactions() {
       alert('删除失败')
     } finally {
       setDeletingId(null)
+    }
+  }
+
+  function toggleSelect(id: number) {
+    setSelectedIds(prev => {
+      const next = new Set(prev)
+      if (next.has(id)) next.delete(id)
+      else next.add(id)
+      return next
+    })
+  }
+
+  function toggleSelectAll() {
+    setSelectedIds(prev =>
+      prev.size === transactions.length ? new Set() : new Set(transactions.map(t => t.id))
+    )
+  }
+
+  async function confirmBatchDelete() {
+    setBatchDeleteConfirmOpen(false)
+    setBatchDeleting(true)
+    try {
+      await transactionApi.batchDelete(Array.from(selectedIds))
+      setSelectedIds(new Set())
+      loadTransactions(page)
+    } catch {
+      alert('批量删除失败')
+    } finally {
+      setBatchDeleting(false)
     }
   }
 
@@ -214,7 +254,7 @@ export default function Transactions() {
     setImportDialogOpen(true)
   }
 
-  const totalPages = Math.ceil(total / PAGE_SIZE)
+  const totalPages = Math.ceil(total / pageSize)
 
   const categoryMap = new Map(categories.map(c => [c.id, c]))
 
@@ -353,6 +393,28 @@ export default function Transactions() {
         </div>
       </div>
 
+      {/* 批量操作栏 */}
+      {canEdit && selectedIds.size > 0 && (
+        <div className="flex items-center justify-between bg-blue-50 border border-blue-100 rounded-2xl px-4 py-3 mb-5">
+          <span className="text-sm text-blue-700 font-medium">已选择 {selectedIds.size} 项</span>
+          <div className="flex items-center gap-2">
+            <button
+              onClick={() => setSelectedIds(new Set())}
+              className="px-3 py-1.5 text-xs text-gray-500 hover:text-gray-700 transition-colors"
+            >
+              取消选择
+            </button>
+            <button
+              onClick={() => setBatchDeleteConfirmOpen(true)}
+              disabled={batchDeleting}
+              className="px-4 py-1.5 bg-red-500 hover:bg-red-600 text-white text-xs font-medium rounded-lg transition-colors disabled:opacity-50"
+            >
+              {batchDeleting ? '删除中...' : '批量删除'}
+            </button>
+          </div>
+        </div>
+      )}
+
       {/* 加载状态 */}
       {loading && (
         <div className="text-center py-10 text-gray-400">加载中...</div>
@@ -375,6 +437,16 @@ export default function Transactions() {
           <table className="w-full text-sm">
             <thead>
               <tr className="bg-gray-50 border-b border-gray-100">
+                {canEdit && (
+                  <th className="text-center px-3 py-3 w-10">
+                    <input
+                      type="checkbox"
+                      checked={transactions.length > 0 && selectedIds.size === transactions.length}
+                      onChange={toggleSelectAll}
+                      className="w-4 h-4 rounded border-gray-300 text-blue-600 focus:ring-blue-500 cursor-pointer"
+                    />
+                  </th>
+                )}
                 <th className="text-left px-5 py-3 font-medium text-gray-500">创建时间</th>
                 <th className="text-left px-5 py-3 font-medium text-gray-500">类型</th>
                 <th className="text-left px-5 py-3 font-medium text-gray-500">分类</th>
@@ -389,6 +461,16 @@ export default function Transactions() {
                 const cat = categoryMap.get(t.category_id)
                 return (
                   <tr key={t.id} className="hover:bg-gray-50 transition-colors">
+                    {canEdit && (
+                      <td className="text-center px-3 py-3.5">
+                        <input
+                          type="checkbox"
+                          checked={selectedIds.has(t.id)}
+                          onChange={() => toggleSelect(t.id)}
+                          className="w-4 h-4 rounded border-gray-300 text-blue-600 focus:ring-blue-500 cursor-pointer"
+                        />
+                      </td>
+                    )}
                     <td className="px-5 py-3.5 text-gray-500 text-xs">
                       {t.created_at ? dayjs(t.created_at).format('YYYY-MM-DD HH:mm') : '-'}
                     </td>
@@ -456,6 +538,19 @@ export default function Transactions() {
       {/* 移动端卡片列表 */}
       {!loading && transactions.length > 0 && isMobile && (
         <div className="space-y-3">
+          {canEdit && (
+            <div className="flex items-center justify-end px-1">
+              <label className="flex items-center gap-1.5 text-xs text-gray-500">
+                <input
+                  type="checkbox"
+                  checked={transactions.length > 0 && selectedIds.size === transactions.length}
+                  onChange={toggleSelectAll}
+                  className="w-4 h-4 rounded border-gray-300 text-blue-600 focus:ring-blue-500 cursor-pointer"
+                />
+                全选本页
+              </label>
+            </div>
+          )}
           {transactions.map(t => {
             const cat = categoryMap.get(t.category_id)
             return (
@@ -463,6 +558,14 @@ export default function Transactions() {
                 key={t.id}
                 className="bg-white rounded-2xl p-4 shadow-sm border border-gray-100 flex items-center gap-3"
               >
+                {canEdit && (
+                  <input
+                    type="checkbox"
+                    checked={selectedIds.has(t.id)}
+                    onChange={() => toggleSelect(t.id)}
+                    className="w-4 h-4 rounded border-gray-300 text-blue-600 focus:ring-blue-500 cursor-pointer flex-shrink-0"
+                  />
+                )}
                 <CategoryIcon icon={cat?.icon ?? '📌'} name={cat?.name} size="md" />
                 <div className="flex-1 min-w-0">
                   <div className="flex items-center justify-between">
@@ -517,56 +620,71 @@ export default function Transactions() {
       )}
 
       {/* 分页 */}
-      {!loading && totalPages > 1 && (
+      {!loading && total > 0 && (
         <div className="flex items-center justify-center gap-1.5 mt-6 flex-wrap">
-          {/* 上一页 */}
-          <button
-            onClick={() => setPage(p => Math.max(1, p - 1))}
-            disabled={page === 1}
-            className="px-3 py-2 text-sm bg-white border border-gray-200 rounded-lg hover:bg-gray-50 disabled:opacity-40 transition-colors"
-          >
-            ‹
-          </button>
+          {totalPages > 1 && (
+            <>
+              {/* 上一页 */}
+              <button
+                onClick={() => setPage(p => Math.max(1, p - 1))}
+                disabled={page === 1}
+                className="px-3 py-2 text-sm bg-white border border-gray-200 rounded-lg hover:bg-gray-50 disabled:opacity-40 transition-colors"
+              >
+                ‹
+              </button>
 
-          {/* 页码 */}
-          {(() => {
-            const pages: (number | '...')[] = []
-            if (totalPages <= 7) {
-              for (let i = 1; i <= totalPages; i++) pages.push(i)
-            } else {
-              pages.push(1)
-              if (page > 3) pages.push('...')
-              for (let i = Math.max(2, page - 1); i <= Math.min(totalPages - 1, page + 1); i++) pages.push(i)
-              if (page < totalPages - 2) pages.push('...')
-              pages.push(totalPages)
-            }
-            return pages.map((p, idx) =>
-              p === '...' ? (
-                <span key={`e${idx}`} className="px-2 py-2 text-sm text-gray-400 select-none">…</span>
-              ) : (
-                <button
-                  key={p}
-                  onClick={() => setPage(p)}
-                  className={`min-w-[36px] px-3 py-2 text-sm rounded-lg border transition-colors ${
-                    p === page
-                      ? 'bg-blue-600 text-white border-blue-600 font-medium'
-                      : 'bg-white border-gray-200 text-gray-700 hover:bg-gray-50'
-                  }`}
-                >
-                  {p}
-                </button>
-              )
-            )
-          })()}
+              {/* 页码 */}
+              {(() => {
+                const pages: (number | '...')[] = []
+                if (totalPages <= 7) {
+                  for (let i = 1; i <= totalPages; i++) pages.push(i)
+                } else {
+                  pages.push(1)
+                  if (page > 3) pages.push('...')
+                  for (let i = Math.max(2, page - 1); i <= Math.min(totalPages - 1, page + 1); i++) pages.push(i)
+                  if (page < totalPages - 2) pages.push('...')
+                  pages.push(totalPages)
+                }
+                return pages.map((p, idx) =>
+                  p === '...' ? (
+                    <span key={`e${idx}`} className="px-2 py-2 text-sm text-gray-400 select-none">…</span>
+                  ) : (
+                    <button
+                      key={p}
+                      onClick={() => setPage(p)}
+                      className={`min-w-[36px] px-3 py-2 text-sm rounded-lg border transition-colors ${
+                        p === page
+                          ? 'bg-blue-600 text-white border-blue-600 font-medium'
+                          : 'bg-white border-gray-200 text-gray-700 hover:bg-gray-50'
+                      }`}
+                    >
+                      {p}
+                    </button>
+                  )
+                )
+              })()}
 
-          {/* 下一页 */}
-          <button
-            onClick={() => setPage(p => Math.min(totalPages, p + 1))}
-            disabled={page === totalPages}
-            className="px-3 py-2 text-sm bg-white border border-gray-200 rounded-lg hover:bg-gray-50 disabled:opacity-40 transition-colors"
+              {/* 下一页 */}
+              <button
+                onClick={() => setPage(p => Math.min(totalPages, p + 1))}
+                disabled={page === totalPages}
+                className="px-3 py-2 text-sm bg-white border border-gray-200 rounded-lg hover:bg-gray-50 disabled:opacity-40 transition-colors"
+              >
+                ›
+              </button>
+            </>
+          )}
+
+          {/* 每页条数 */}
+          <select
+            value={pageSize}
+            onChange={e => handlePageSizeChange(Number(e.target.value))}
+            className="px-2 py-2 text-sm bg-white border border-gray-200 rounded-lg text-gray-600 focus:outline-none focus:ring-2 focus:ring-blue-500 ml-1"
           >
-            ›
-          </button>
+            {PAGE_SIZE_OPTIONS.map(size => (
+              <option key={size} value={size}>{size} 条/页</option>
+            ))}
+          </select>
 
           <span className="text-xs text-gray-400 ml-2">共 {total} 条</span>
         </div>
@@ -599,6 +717,30 @@ export default function Transactions() {
               </button>
               <button
                 onClick={confirmDelete}
+                className="px-4 py-2 text-sm text-white bg-red-500 hover:bg-red-600 rounded-lg transition-colors"
+              >
+                删除
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* 批量删除确认弹窗 */}
+      {batchDeleteConfirmOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40" onClick={() => setBatchDeleteConfirmOpen(false)}>
+          <div className="bg-white rounded-2xl p-6 shadow-xl w-80 mx-4" onClick={e => e.stopPropagation()}>
+            <h3 className="text-base font-semibold text-gray-800 mb-2">确认批量删除</h3>
+            <p className="text-sm text-gray-500 mb-5">此操作不可撤销，确定要删除选中的 {selectedIds.size} 条记录吗？</p>
+            <div className="flex gap-3 justify-end">
+              <button
+                onClick={() => setBatchDeleteConfirmOpen(false)}
+                className="px-4 py-2 text-sm text-gray-600 bg-gray-100 hover:bg-gray-200 rounded-lg transition-colors"
+              >
+                取消
+              </button>
+              <button
+                onClick={confirmBatchDelete}
                 className="px-4 py-2 text-sm text-white bg-red-500 hover:bg-red-600 rounded-lg transition-colors"
               >
                 删除

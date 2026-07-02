@@ -152,3 +152,23 @@ func (h *TransactionHandler) Delete(c *gin.Context) {
 	}
 	c.JSON(http.StatusOK, dto.OK(nil))
 }
+
+// BatchDelete 批量删除交易记录
+// DELETE /api/transactions/batch
+func (h *TransactionHandler) BatchDelete(c *gin.Context) {
+	tenantID := middleware.GetTenantID(c)
+
+	var req dto.BatchDeleteTransactionReq
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusOK, dto.Fail(400, "参数错误: "+err.Error()))
+		return
+	}
+
+	deleted, err := h.transactionSvc.BatchDelete(c.Request.Context(), req.IDs, tenantID)
+	if err != nil {
+		log.Printf("[transaction] BatchDelete tenant=%d count=%d error: %v\n%s", tenantID, len(req.IDs), err, debug.Stack())
+		c.JSON(http.StatusOK, dto.Fail(500, "批量删除交易失败: "+err.Error()))
+		return
+	}
+	c.JSON(http.StatusOK, dto.OK(deleted))
+}

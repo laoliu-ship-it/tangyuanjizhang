@@ -16,6 +16,7 @@ type TransactionService interface {
 	BatchCreate(ctx context.Context, tenantID, userID uint64, req dto.BatchCreateTransactionReq) ([]*model.Transaction, error)
 	Update(ctx context.Context, id, tenantID uint64, req dto.UpdateTransactionReq) (*model.Transaction, error)
 	Delete(ctx context.Context, id, tenantID uint64) error
+	BatchDelete(ctx context.Context, ids []uint64, tenantID uint64) (int64, error)
 	GetByID(ctx context.Context, id, tenantID uint64) (*model.Transaction, error)
 	List(ctx context.Context, tenantID uint64, filter dto.TransactionFilter) (*dto.TransactionListResp, error)
 }
@@ -181,6 +182,10 @@ func (s *transactionService) Delete(ctx context.Context, id, tenantID uint64) er
 		return ErrTransactionNotFound
 	}
 	return s.transactionRepo.Delete(ctx, id, tenantID)
+}
+
+func (s *transactionService) BatchDelete(ctx context.Context, ids []uint64, tenantID uint64) (int64, error) {
+	return s.transactionRepo.BatchDelete(ctx, ids, tenantID)
 }
 
 func (s *transactionService) GetByID(ctx context.Context, id, tenantID uint64) (*model.Transaction, error) {

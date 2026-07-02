@@ -61,6 +61,7 @@ type TransactionRepo interface {
 	BatchCreate(ctx context.Context, txs []*model.Transaction) error
 	Update(ctx context.Context, tx *model.Transaction) error
 	Delete(ctx context.Context, id, tenantID uint64) error
+	BatchDelete(ctx context.Context, ids []uint64, tenantID uint64) (int64, error)
 	GetByID(ctx context.Context, id, tenantID uint64) (*model.Transaction, error)
 	List(ctx context.Context, tenantID uint64, filter dto.TransactionFilter) ([]*model.Transaction, int64, error)
 	SaveImage(ctx context.Context, transactionID uint64, imagePath string, ocrAmount float64, ocrDate, ocrMerchant, ocrRawTexts string) error
