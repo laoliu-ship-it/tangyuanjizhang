@@ -203,6 +203,11 @@ func (s *authService) Login(ctx context.Context, req dto.LoginReq) (*dto.LoginRe
 		return nil, err
 	}
 
+	// 最近登录时间仅用于活跃度统计，失败不阻断登录
+	if err := s.userRepo.UpdateLastLoginAt(ctx, user.ID, time.Now()); err != nil {
+		log.Printf("[auth] UpdateLastLoginAt: user=%d error: %v", user.ID, err)
+	}
+
 	tenants, err := s.tenantRepo.ListByUserID(ctx, user.ID)
 	if err != nil {
 		return nil, err

@@ -23,19 +23,20 @@ import (
 )
 
 type OCRHandler struct {
-	ocrSvc        service.OCRService
-	merchantSvc   service.MerchantService
-	categorySvc   service.CategoryService
-	llmSvc        service.LLMService
-	creditsSvc    service.CreditsService
-	storage       storage.Storage
-	mediaRepo     repo.MediaFileRepo
-	ocrRecordRepo repo.OcrRecordRepo
-	uploadCfg     config.UploadConfig
+	ocrSvc         service.OCRService
+	merchantSvc    service.MerchantService
+	categorySvc    service.CategoryService
+	llmSvc         service.LLMService
+	creditsSvc     service.CreditsService
+	storage        storage.Storage
+	mediaRepo      repo.MediaFileRepo
+	ocrRecordRepo  repo.OcrRecordRepo
+	tokenUsageRepo repo.LLMTokenUsageRepo
+	uploadCfg      config.UploadConfig
 }
 
-func NewOCRHandler(ocrSvc service.OCRService, merchantSvc service.MerchantService, categorySvc service.CategoryService, llmSvc service.LLMService, creditsSvc service.CreditsService, store storage.Storage, mediaRepo repo.MediaFileRepo, ocrRecordRepo repo.OcrRecordRepo, uploadCfg config.UploadConfig) *OCRHandler {
-	return &OCRHandler{ocrSvc: ocrSvc, merchantSvc: merchantSvc, categorySvc: categorySvc, llmSvc: llmSvc, creditsSvc: creditsSvc, storage: store, mediaRepo: mediaRepo, ocrRecordRepo: ocrRecordRepo, uploadCfg: uploadCfg}
+func NewOCRHandler(ocrSvc service.OCRService, merchantSvc service.MerchantService, categorySvc service.CategoryService, llmSvc service.LLMService, creditsSvc service.CreditsService, store storage.Storage, mediaRepo repo.MediaFileRepo, ocrRecordRepo repo.OcrRecordRepo, tokenUsageRepo repo.LLMTokenUsageRepo, uploadCfg config.UploadConfig) *OCRHandler {
+	return &OCRHandler{ocrSvc: ocrSvc, merchantSvc: merchantSvc, categorySvc: categorySvc, llmSvc: llmSvc, creditsSvc: creditsSvc, storage: store, mediaRepo: mediaRepo, ocrRecordRepo: ocrRecordRepo, tokenUsageRepo: tokenUsageRepo, uploadCfg: uploadCfg}
 }
 
 // Upload 上传图片并进行 OCR 识别
@@ -258,12 +259,14 @@ func (h *OCRHandler) Analyze(c *gin.Context) {
 			rawTexts := []string{}
 			var llmSuggestions []*dto.LLMSuggestion
 			var llmErrMsg string
-			if suggestions, lerr := h.llmSvc.Analyze(c.Request.Context(), tenantID, existing.FilePath, rawTexts, categoryItems); lerr != nil {
+			suggestions, usage, lerr := h.llmSvc.Analyze(c.Request.Context(), tenantID, existing.FilePath, rawTexts, categoryItems)
+			recordLLMTokenUsage(c.Request.Context(), h.tokenUsageRepo, tenantID, "media_file", existing.ID, usage)
+			if lerr != nil {
 				log.Printf("[LLM] tenant=%d analyze error: %v", tenantID, lerr)
 				llmErrMsg = friendlyLLMError(lerr)
 			} else {
 				// 重复文件：仅扣 LLM 费（upload+OCR 已在首次上传时扣过）
-				if deductErr := h.creditsSvc.CheckAndDeduct(c.Request.Context(), tenantID, "llm", "media_file", existing.ID, "AI整理(重复图片)"); deductErr != nil {
+				if deductErr := h.creditsSvc.CheckAndDeduct(c.Request.Context(), tenantID, llmActionOrc2Bill, "media_file", existing.ID, "AI整理(重复图片)"); deductErr != nil {
 					log.Printf("[credits] tenant=%d llm deduct error: %v", tenantID, deductErr)
 					c.JSON(http.StatusOK, dto.Fail(402, "积分不足，请联系管理员充值"))
 					return
@@ -382,7 +385,9 @@ func (h *OCRHandler) Analyze(c *gin.Context) {
 	// LLM 分析（非致命，失败时记录错误继续返回 OCR 结果，LLM 失败不扣 LLM 积分）
 	var llmSuggestions []*dto.LLMSuggestion
 	var llmErrMsg string
-	if suggestions, lerr := h.llmSvc.Analyze(c.Request.Context(), tenantID, savedPath, rawTexts, categoryItems); lerr != nil {
+	suggestions, usage, lerr := h.llmSvc.Analyze(c.Request.Context(), tenantID, savedPath, rawTexts, categoryItems)
+	recordLLMTokenUsage(c.Request.Context(), h.tokenUsageRepo, tenantID, "ocr_record", ocrRec.ID, usage)
+	if lerr != nil {
 		llmDuration := time.Since(llmStartTime)
 		log.Printf("[LLM] tenant=%d 耗时=%.2fs 失败: %v", tenantID, llmDuration.Seconds(), lerr)
 		llmErrMsg = friendlyLLMError(lerr)
@@ -395,7 +400,7 @@ func (h *OCRHandler) Analyze(c *gin.Context) {
 				tenantID, i, s.Type, s.Amount, s.CategoryID, s.CategoryHint, s.MerchantName, s.Date)
 		}
 		// LLM 成功后才扣 llm 积分
-		if deductErr := h.creditsSvc.CheckAndDeduct(c.Request.Context(), tenantID, "llm", "ocr_record", ocrRec.ID, "AI整理"); deductErr != nil {
+		if deductErr := h.creditsSvc.CheckAndDeduct(c.Request.Context(), tenantID, llmActionOrc2Bill, "ocr_record", ocrRec.ID, "AI整理"); deductErr != nil {
 			log.Printf("[credits] tenant=%d llm deduct error (non-fatal): %v", tenantID, deductErr)
 		}
 	}

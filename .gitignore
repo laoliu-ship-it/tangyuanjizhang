@@ -7,3 +7,6 @@ dist-server
 .playwright-mcp
 dist/server
 .env.deploy
+.DS_Store
+.idea/
+fnos/app/server

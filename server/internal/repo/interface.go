@@ -2,6 +2,7 @@ package repo
 
 import (
 	"context"
+	"time"
 
 	"fandianjizhang/server/internal/dto"
 	"fandianjizhang/server/internal/model"
@@ -14,6 +15,7 @@ type UserRepo interface {
 	GetByUsername(ctx context.Context, username string) (*model.User, error)
 	GetByID(ctx context.Context, id uint64) (*model.User, error)
 	CountByRegisterIP(ctx context.Context, ip string) (int64, error)
+	UpdateLastLoginAt(ctx context.Context, userID uint64, t time.Time) error
 }
 
 // TenantRepo 租户数据仓库接口
@@ -101,6 +103,11 @@ type TenantLLMConfigRepo interface {
 	Save(ctx context.Context, cfg *model.TenantLLMConfig) error
 }
 
+// LLMTokenUsageRepo 大模型对话 token 消耗记录数据仓库接口
+type LLMTokenUsageRepo interface {
+	Create(ctx context.Context, u *model.LLMTokenUsage) error
+}
+
 // TenantRoleRepo 租户角色数据仓库接口
 type TenantRoleRepo interface {
 	Create(ctx context.Context, role *model.TenantRole) error
@@ -145,6 +152,7 @@ type PlatformStatsRepo interface {
 	CountTenants(ctx context.Context) (int64, error)
 	CountTransactions(ctx context.Context) (int64, error)
 	ListUsers(ctx context.Context, keyword string, page, pageSize int) ([]*model.User, int64, error)
+	LastTransactionTimesByUserIDs(ctx context.Context, userIDs []uint64) (map[uint64]time.Time, error)
 	CountTransactionsByUserID(ctx context.Context, userID uint64) (int64, error)
 	CountMediaByUserID(ctx context.Context, userID uint64) (int64, error)
 	CountTenantsByUserID(ctx context.Context, userID uint64) (int64, error)
@@ -161,11 +169,15 @@ type PlatformConfigRepo interface {
 type TenantCreditsRepo interface {
 	// GetOrCreate 查询积分余额，不存在时初始化一条 balance=0 的记录
 	GetOrCreate(ctx context.Context, tenantID uint64) (*model.TenantCredits, error)
-	// Deduct 原子扣费：SELECT FOR UPDATE → 检查余额 → 更新 → 写流水日志
+	// Deduct 原子扣费：锁租户行 → 惰性过期 → 按 expires_at 升序逐批扣减（最近过期优先）→ 写流水与批次明细
 	// unlimited 租户直接写日志（balance_after=-1），不校验余额
 	Deduct(ctx context.Context, tenantID uint64, cost int64, action, refType string, refID uint64, note string) error
-	// Gift 赠送积分（正数 delta），写流水日志
-	Gift(ctx context.Context, tenantID uint64, delta int64, action, note string) error
+	// Gift 发放积分（delta>0 生成一个 expiresAt 到期的批次；delta<0 为管理员扣减，按最近过期优先消耗批次），写流水日志
+	Gift(ctx context.Context, tenantID uint64, delta int64, expiresAt time.Time, action, note string) error
+	// ListActiveLots 查询未过期且有剩余的批次（按 expires_at 升序），用于展示"即将过期"
+	ListActiveLots(ctx context.Context, tenantID uint64) ([]*model.CreditLot, error)
+	// ExpireDueLots 全量清理所有租户的到期批次并写 expire 流水，返回作废的积分总数（定时任务用）
+	ExpireDueLots(ctx context.Context) (int64, error)
 	// SetUnlimited 设置/取消无限制白名单
 	SetUnlimited(ctx context.Context, tenantID uint64, unlimited bool) error
 	// ListLogs 查询流水日志（按 created_at 倒序）

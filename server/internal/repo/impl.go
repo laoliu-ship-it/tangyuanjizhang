@@ -70,6 +70,11 @@ func (r *userRepo) CountByRegisterIP(ctx context.Context, ip string) (int64, err
 	return count, err
 }
 
+func (r *userRepo) UpdateLastLoginAt(ctx context.Context, userID uint64, t time.Time) error {
+	return r.db.WithContext(ctx).Model(&model.User{}).
+		Where("id = ?", userID).Update("last_login_at", t).Error
+}
+
 // ========== TenantRepo ==========
 
 type tenantRepo struct {
@@ -747,6 +752,22 @@ func (r *tenantLLMConfigRepo) Save(ctx context.Context, cfg *model.TenantLLMConf
 	return r.db.WithContext(ctx).Save(cfg).Error
 }
 
+// ========== LLMTokenUsageRepo ==========
+
+type llmTokenUsageRepo struct {
+	db *gorm.DB
+}
+
+func NewLLMTokenUsageRepo(db *gorm.DB) LLMTokenUsageRepo {
+	return &llmTokenUsageRepo{db: db}
+}
+
+// Create 按 (tenant_id, action, ref_type, ref_id) 幂等写入；已存在则静默跳过，
+// 避免重复请求/竞态（如用户重复点击“AI整理”、并发请求同时未命中 LLM 缓存）产生重复 token 记录
+func (r *llmTokenUsageRepo) Create(ctx context.Context, u *model.LLMTokenUsage) error {
+	return r.db.WithContext(ctx).Clauses(clause.OnConflict{DoNothing: true}).Create(u).Error
+}
+
 // ========== TenantSettingsRepo ==========
 
 type tenantSettingsRepo struct {
@@ -880,6 +901,29 @@ func (r *platformStatsRepo) ListUsers(ctx context.Context, keyword string, page,
 	offset := (page - 1) * pageSize
 	err := query.Order("id DESC").Limit(pageSize).Offset(offset).Find(&users).Error
 	return users, total, err
+}
+
+func (r *platformStatsRepo) LastTransactionTimesByUserIDs(ctx context.Context, userIDs []uint64) (map[uint64]time.Time, error) {
+	result := make(map[uint64]time.Time, len(userIDs))
+	if len(userIDs) == 0 {
+		return result, nil
+	}
+	var rows []struct {
+		UserID uint64
+		LastAt time.Time
+	}
+	err := r.db.WithContext(ctx).Model(&model.Transaction{}).
+		Select("user_id, MAX(created_at) AS last_at").
+		Where("user_id IN ? AND deleted_at IS NULL", userIDs).
+		Group("user_id").
+		Scan(&rows).Error
+	if err != nil {
+		return nil, err
+	}
+	for _, row := range rows {
+		result[row.UserID] = row.LastAt
+	}
+	return result, nil
 }
 
 func (r *platformStatsRepo) CountTransactionsByUserID(ctx context.Context, userID uint64) (int64, error) {
@@ -1018,17 +1062,132 @@ func (r *tenantCreditsRepo) GetOrCreate(ctx context.Context, tenantID uint64) (*
 	return &c, nil
 }
 
-// Deduct 原子扣费：SELECT FOR UPDATE → 检查余额 → 更新余额 → 写流水日志
+// lockCreditsRowTx 确保 tenant_credits 记录存在并加行锁（充当该租户积分操作的互斥锁），返回最新记录
+func lockCreditsRowTx(tx *gorm.DB, tenantID uint64) (*model.TenantCredits, error) {
+	var c model.TenantCredits
+	// 先确保记录存在，再加行锁
+	if err := tx.Where(model.TenantCredits{TenantID: tenantID}).FirstOrCreate(&c).Error; err != nil {
+		return nil, err
+	}
+	// 重新加锁读取最新值
+	if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).
+		Where("tenant_id = ?", tenantID).First(&c).Error; err != nil {
+		return nil, err
+	}
+	return &c, nil
+}
+
+// sumLotsRemainingTx 汇总该租户所有批次的剩余积分（不区分是否过期；过期批次由惰性清理保证 remaining=0）
+func sumLotsRemainingTx(tx *gorm.DB, tenantID uint64) (int64, error) {
+	var sum int64
+	err := tx.Model(&model.CreditLot{}).
+		Where("tenant_id = ?", tenantID).
+		Select("COALESCE(SUM(remaining), 0)").Scan(&sum).Error
+	return sum, err
+}
+
+// expireDueLotsTx 清零该租户已到期批次的剩余积分，逐批写 action=expire 的流水，返回作废总数。
+// 调用方必须已持有该租户 tenant_credits 行锁；不更新余额缓存，由调用方最终统一同步。
+func expireDueLotsTx(tx *gorm.DB, tenantID uint64, now time.Time) (int64, error) {
+	var due []*model.CreditLot
+	if err := tx.Where("tenant_id = ? AND remaining > 0 AND expires_at <= ?", tenantID, now).
+		Order("expires_at ASC, id ASC").Find(&due).Error; err != nil {
+		return 0, err
+	}
+	if len(due) == 0 {
+		return 0, nil
+	}
+	balance, err := sumLotsRemainingTx(tx, tenantID)
+	if err != nil {
+		return 0, err
+	}
+	var expired int64
+	for _, lot := range due {
+		res := tx.Model(&model.CreditLot{}).
+			Where("id = ? AND remaining = ?", lot.ID, lot.Remaining).
+			Update("remaining", 0)
+		if res.Error != nil {
+			return 0, res.Error
+		}
+		if res.RowsAffected == 0 {
+			// 行锁保护下不应发生；出现说明有并发写绕过了锁，回滚
+			return 0, errors.New("积分批次并发修改冲突")
+		}
+		balance -= lot.Remaining
+		expired += lot.Remaining
+		log := &model.CreditLog{
+			TenantID:     tenantID,
+			Amount:       -lot.Remaining,
+			Action:       "expire",
+			BalanceAfter: balance,
+			RefType:      "credit_lot",
+			RefID:        lot.ID,
+			Note:         "积分到期作废",
+		}
+		if err := tx.Create(log).Error; err != nil {
+			return 0, err
+		}
+	}
+	return expired, nil
+}
+
+// consumeLotsTx 按 expires_at 升序（最近过期优先）逐批扣减 cost 积分，返回各批次扣减明细（LogID 由调用方回填）。
+// 余额不足返回 ErrInsufficientCredits；调用方必须已持有行锁并完成惰性过期。
+func consumeLotsTx(tx *gorm.DB, tenantID uint64, cost int64, now time.Time) ([]*model.CreditLogDetail, error) {
+	var lots []*model.CreditLot
+	if err := tx.Where("tenant_id = ? AND remaining > 0 AND expires_at > ?", tenantID, now).
+		Order("expires_at ASC, id ASC").Find(&lots).Error; err != nil {
+		return nil, err
+	}
+	var available int64
+	for _, lot := range lots {
+		available += lot.Remaining
+	}
+	if available < cost {
+		return nil, ErrInsufficientCredits
+	}
+	details := make([]*model.CreditLogDetail, 0, 2)
+	remain := cost
+	for _, lot := range lots {
+		if remain == 0 {
+			break
+		}
+		take := min(lot.Remaining, remain)
+		// 条件更新是防超扣的第二道保险：并发绕过行锁时 remaining 不够会更新 0 行
+		res := tx.Model(&model.CreditLot{}).
+			Where("id = ? AND remaining >= ?", lot.ID, take).
+			UpdateColumn("remaining", gorm.Expr("remaining - ?", take))
+		if res.Error != nil {
+			return nil, res.Error
+		}
+		if res.RowsAffected == 0 {
+			return nil, ErrInsufficientCredits
+		}
+		details = append(details, &model.CreditLogDetail{LotID: lot.ID, Amount: take})
+		remain -= take
+	}
+	return details, nil
+}
+
+// createLogWithDetailsTx 写流水并回填批次明细的 LogID
+func createLogWithDetailsTx(tx *gorm.DB, log *model.CreditLog, details []*model.CreditLogDetail) error {
+	if err := tx.Create(log).Error; err != nil {
+		return err
+	}
+	if len(details) == 0 {
+		return nil
+	}
+	for _, d := range details {
+		d.LogID = log.ID
+	}
+	return tx.Create(&details).Error
+}
+
+// Deduct 原子扣费：锁租户行 → 幂等检查 → 惰性过期 → 按最近过期优先逐批扣减 → 同步余额缓存 → 写流水与明细
 func (r *tenantCreditsRepo) Deduct(ctx context.Context, tenantID uint64, cost int64, action, refType string, refID uint64, note string) error {
 	return r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-		var c model.TenantCredits
-		// 先确保记录存在，再加行锁
-		if err := tx.Where(model.TenantCredits{TenantID: tenantID}).FirstOrCreate(&c).Error; err != nil {
-			return err
-		}
-		// 重新加锁读取最新值
-		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).
-			Where("tenant_id = ?", tenantID).First(&c).Error; err != nil {
+		c, err := lockCreditsRowTx(tx, tenantID)
+		if err != nil {
 			return err
 		}
 
@@ -1046,13 +1205,21 @@ func (r *tenantCreditsRepo) Deduct(ctx context.Context, tenantID uint64, cost in
 		}
 
 		balanceAfter := int64(-1)
+		var details []*model.CreditLogDetail
 		if !c.Unlimited {
-			if c.Balance < cost {
-				return ErrInsufficientCredits
+			now := time.Now()
+			if _, err := expireDueLotsTx(tx, tenantID, now); err != nil {
+				return err
 			}
-			c.Balance -= cost
-			balanceAfter = c.Balance
-			if err := tx.Model(&c).Update("balance", c.Balance).Error; err != nil {
+			details, err = consumeLotsTx(tx, tenantID, cost, now)
+			if err != nil {
+				return err
+			}
+			balanceAfter, err = sumLotsRemainingTx(tx, tenantID)
+			if err != nil {
+				return err
+			}
+			if err := tx.Model(c).Update("balance", balanceAfter).Error; err != nil {
 				return err
 			}
 		}
@@ -1066,24 +1233,53 @@ func (r *tenantCreditsRepo) Deduct(ctx context.Context, tenantID uint64, cost in
 			RefID:        refID,
 			Note:         note,
 		}
-		return tx.Create(log).Error
+		return createLogWithDetailsTx(tx, log, details)
 	})
 }
 
-// Gift 赠送积分，写流水日志
-func (r *tenantCreditsRepo) Gift(ctx context.Context, tenantID uint64, delta int64, action, note string) error {
+// Gift 发放/扣减积分：delta>0 生成一个到期时间为 expiresAt 的新批次；
+// delta<0（管理员扣减）按最近过期优先消耗批次，不足返回 ErrInsufficientCredits
+func (r *tenantCreditsRepo) Gift(ctx context.Context, tenantID uint64, delta int64, expiresAt time.Time, action, note string) error {
 	return r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-		var c model.TenantCredits
-		if err := tx.Where(model.TenantCredits{TenantID: tenantID}).FirstOrCreate(&c).Error; err != nil {
-			return err
-		}
-		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).
-			Where("tenant_id = ?", tenantID).First(&c).Error; err != nil {
+		c, err := lockCreditsRowTx(tx, tenantID)
+		if err != nil {
 			return err
 		}
 
-		c.Balance += delta
-		if err := tx.Model(&c).Update("balance", c.Balance).Error; err != nil {
+		now := time.Now()
+		if _, err := expireDueLotsTx(tx, tenantID, now); err != nil {
+			return err
+		}
+
+		var details []*model.CreditLogDetail
+		refType, refID := "", uint64(0)
+		switch {
+		case delta > 0:
+			lot := &model.CreditLot{
+				TenantID:  tenantID,
+				Amount:    delta,
+				Remaining: delta,
+				Source:    action,
+				ExpiresAt: expiresAt,
+			}
+			if err := tx.Create(lot).Error; err != nil {
+				return err
+			}
+			refType, refID = "credit_lot", lot.ID
+		case delta < 0:
+			details, err = consumeLotsTx(tx, tenantID, -delta, now)
+			if err != nil {
+				return err
+			}
+		default:
+			return nil
+		}
+
+		balance, err := sumLotsRemainingTx(tx, tenantID)
+		if err != nil {
+			return err
+		}
+		if err := tx.Model(c).Update("balance", balance).Error; err != nil {
 			return err
 		}
 
@@ -1091,11 +1287,59 @@ func (r *tenantCreditsRepo) Gift(ctx context.Context, tenantID uint64, delta int
 			TenantID:     tenantID,
 			Amount:       delta,
 			Action:       action,
-			BalanceAfter: c.Balance,
+			BalanceAfter: balance,
+			RefType:      refType,
+			RefID:        refID,
 			Note:         note,
 		}
-		return tx.Create(log).Error
+		return createLogWithDetailsTx(tx, log, details)
 	})
+}
+
+// ListActiveLots 查询未过期且有剩余的批次，按 expires_at 升序（最先过期的在前）
+func (r *tenantCreditsRepo) ListActiveLots(ctx context.Context, tenantID uint64) ([]*model.CreditLot, error) {
+	var lots []*model.CreditLot
+	err := r.db.WithContext(ctx).
+		Where("tenant_id = ? AND remaining > 0 AND expires_at > ?", tenantID, time.Now()).
+		Order("expires_at ASC, id ASC").
+		Find(&lots).Error
+	return lots, err
+}
+
+// ExpireDueLots 全量清理所有租户的到期批次（定时任务兜底），逐租户独立事务，返回作废积分总数
+func (r *tenantCreditsRepo) ExpireDueLots(ctx context.Context) (int64, error) {
+	var tenantIDs []uint64
+	if err := r.db.WithContext(ctx).Model(&model.CreditLot{}).
+		Where("remaining > 0 AND expires_at <= ?", time.Now()).
+		Distinct().Pluck("tenant_id", &tenantIDs).Error; err != nil {
+		return 0, err
+	}
+	var total int64
+	for _, tid := range tenantIDs {
+		err := r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+			c, err := lockCreditsRowTx(tx, tid)
+			if err != nil {
+				return err
+			}
+			expired, err := expireDueLotsTx(tx, tid, time.Now())
+			if err != nil {
+				return err
+			}
+			if expired == 0 {
+				return nil
+			}
+			balance, err := sumLotsRemainingTx(tx, tid)
+			if err != nil {
+				return err
+			}
+			total += expired
+			return tx.Model(c).Update("balance", balance).Error
+		})
+		if err != nil {
+			return total, err
+		}
+	}
+	return total, nil
 }
 
 func (r *tenantCreditsRepo) SetUnlimited(ctx context.Context, tenantID uint64, unlimited bool) error {

@@ -36,7 +36,7 @@ type CachedLLMService struct {
 
 // serviceLLM 包装器的内部接口，等同于 service.LLMService
 type serviceLLM interface {
-	Analyze(ctx context.Context, tenantID uint64, imagePath string, rawTexts []string, categories []dto.CategoryItem) ([]*dto.LLMSuggestion, error)
+	Analyze(ctx context.Context, tenantID uint64, imagePath string, rawTexts []string, categories []dto.CategoryItem) ([]*dto.LLMSuggestion, *dto.LLMUsage, error)
 	GetConfig(ctx context.Context, tenantID uint64) (*dto.TenantLLMConfigResp, error)
 	SaveConfig(ctx context.Context, tenantID uint64, req dto.SaveTenantLLMConfigReq) (*dto.TenantLLMConfigResp, error)
 	GetPrompt(ctx context.Context, tenantID uint64) (*dto.TenantPromptResp, error)
@@ -50,7 +50,7 @@ func NewCachedLLMService(inner serviceLLM, configRepo repo.PlatformConfigRepo) *
 		inner:      inner,
 		configRepo: configRepo,
 		cache:      make(map[string]*llmCacheEntry),
-		cacheType:  "file", // 默认文件缓存
+		cacheType:  "file",           // 默认文件缓存
 		cacheTTL:   30 * time.Minute, // 默认 30 分钟
 		enabled:    true,
 	}
@@ -84,8 +84,8 @@ func (c *CachedLLMService) loadConfig(ctx context.Context) {
 	c.lastConfigCheck = time.Now()
 }
 
-// Analyze 先查缓存，未命中再调用 LLM
-func (c *CachedLLMService) Analyze(ctx context.Context, tenantID uint64, imagePath string, rawTexts []string, categories []dto.CategoryItem) ([]*dto.LLMSuggestion, error) {
+// Analyze 先查缓存，未命中再调用 LLM；缓存命中时未产生新调用，usage 返回 nil
+func (c *CachedLLMService) Analyze(ctx context.Context, tenantID uint64, imagePath string, rawTexts []string, categories []dto.CategoryItem) ([]*dto.LLMSuggestion, *dto.LLMUsage, error) {
 	// 加载配置
 	c.loadConfig(ctx)
 
@@ -114,14 +114,14 @@ func (c *CachedLLMService) Analyze(ctx context.Context, tenantID uint64, imagePa
 	entry, ok := c.cache[key]
 	if ok && time.Now().Before(entry.expiresAt) {
 		c.mu.Unlock()
-		return entry.suggestions, nil
+		return entry.suggestions, nil, nil
 	}
 	c.mu.Unlock()
 
 	// 调用 LLM
-	suggestions, err := c.inner.Analyze(ctx, tenantID, imagePath, rawTexts, categories)
+	suggestions, usage, err := c.inner.Analyze(ctx, tenantID, imagePath, rawTexts, categories)
 	if err != nil {
-		return nil, err
+		return nil, usage, err
 	}
 
 	// 存缓存
@@ -129,7 +129,7 @@ func (c *CachedLLMService) Analyze(ctx context.Context, tenantID uint64, imagePa
 	c.cache[key] = &llmCacheEntry{suggestions: suggestions, expiresAt: time.Now().Add(c.cacheTTL)}
 	c.mu.Unlock()
 
-	return suggestions, nil
+	return suggestions, usage, nil
 }
 
 // GetConfig 透传

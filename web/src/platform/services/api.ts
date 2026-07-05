@@ -50,6 +50,8 @@ export interface PlatformUserItem {
   username: string
   email: string
   created_at: string
+  last_login_at: string
+  last_transaction_at: string
 }
 
 export interface PlatformUserListResp {
@@ -123,6 +125,30 @@ export interface TenantPromptResp {
   placeholder: string
 }
 
+// ========== 定时任务管理 ==========
+
+export interface CronJobItem {
+  name: string
+  description: string
+  schedule: string
+  running: boolean
+  next_run_at: string
+  last_run_at: string
+  last_duration: string
+  last_error: string
+  run_count: number
+  fail_count: number
+}
+
+export interface CronJobListResp {
+  jobs: CronJobItem[]
+}
+
+export interface CronTriggerResp {
+  name: string
+  triggered: boolean
+}
+
 export const platformAdminApi = {
   login: (data: { email: string; password: string }) =>
     platformApi.post<ApiResponse<PlatformLoginResp>>('/auth/login', data),
@@ -175,6 +201,13 @@ export const platformAdminApi = {
     mode: string
   }) =>
     platformApi.put<ApiResponse<PlatformLLMConfig>>('/llm-config', data),
+
+  // 定时任务管理
+  listCronJobs: () =>
+    platformApi.get<ApiResponse<CronJobListResp>>('/cron/jobs'),
+
+  triggerCronJob: (name: string) =>
+    platformApi.post<ApiResponse<CronTriggerResp>>(`/cron/jobs/${name}/run`),
 }
 
 export default platformApi

@@ -17,6 +17,7 @@ import PlatformDashboard from './platform/pages/Dashboard'
 import PlatformUsers from './platform/pages/Users'
 import PlatformUserDetail from './platform/pages/UserDetail'
 import PlatformSettings from './platform/pages/Settings'
+import PlatformCronJobs from './platform/pages/CronJobs'
 
 function RequireAuth({ children }: { children: React.ReactNode }) {
   const token = useAuthStore(s => s.token)
@@ -121,6 +122,7 @@ export default function App() {
           <Route path="users" element={<PlatformUsers />} />
           <Route path="users/:id" element={<PlatformUserDetail />} />
           <Route path="settings" element={<PlatformSettings />} />
+          <Route path="cron" element={<PlatformCronJobs />} />
         </Route>
 
         <Route path="*" element={<Navigate to="/" replace />} />

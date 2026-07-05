@@ -123,14 +123,30 @@ func (s *platformAdminService) ListUsers(ctx context.Context, filter dto.Platfor
 		return nil, err
 	}
 
+	userIDs := make([]uint64, 0, len(users))
+	for _, u := range users {
+		userIDs = append(userIDs, u.ID)
+	}
+	lastTxTimes, err := s.statsRepo.LastTransactionTimesByUserIDs(ctx, userIDs)
+	if err != nil {
+		return nil, err
+	}
+
 	items := make([]*dto.PlatformUserItem, 0, len(users))
 	for _, u := range users {
-		items = append(items, &dto.PlatformUserItem{
+		item := &dto.PlatformUserItem{
 			ID:        u.ID,
 			Username:  u.Username,
 			Email:     u.Email,
 			CreatedAt: u.CreatedAt.Format("2006-01-02 15:04:05"),
-		})
+		}
+		if u.LastLoginAt != nil {
+			item.LastLoginAt = u.LastLoginAt.Format("2006-01-02 15:04:05")
+		}
+		if t, ok := lastTxTimes[u.ID]; ok {
+			item.LastTransactionAt = t.Format("2006-01-02 15:04:05")
+		}
+		items = append(items, item)
 	}
 	return &dto.PlatformUserListResp{
 		Total: total,

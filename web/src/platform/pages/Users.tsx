@@ -51,13 +51,15 @@ export default function PlatformUsers() {
               <th className="text-left px-6 py-3 text-xs font-medium text-gray-500 uppercase">用户名</th>
               <th className="text-left px-6 py-3 text-xs font-medium text-gray-500 uppercase">邮箱</th>
               <th className="text-left px-6 py-3 text-xs font-medium text-gray-500 uppercase">注册时间</th>
+              <th className="text-left px-6 py-3 text-xs font-medium text-gray-500 uppercase">最近登录</th>
+              <th className="text-left px-6 py-3 text-xs font-medium text-gray-500 uppercase">最近记账</th>
             </tr>
           </thead>
           <tbody>
             {loading ? (
-              <tr><td colSpan={4} className="px-6 py-8 text-center text-gray-400">加载中...</td></tr>
+              <tr><td colSpan={6} className="px-6 py-8 text-center text-gray-400">加载中...</td></tr>
             ) : users.length === 0 ? (
-              <tr><td colSpan={4} className="px-6 py-8 text-center text-gray-400">暂无用户</td></tr>
+              <tr><td colSpan={6} className="px-6 py-8 text-center text-gray-400">暂无用户</td></tr>
             ) : (
               users.map(user => (
                 <tr
@@ -69,6 +71,8 @@ export default function PlatformUsers() {
                   <td className="px-6 py-4 text-sm font-medium text-gray-800">{user.username}</td>
                   <td className="px-6 py-4 text-sm text-gray-600">{user.email}</td>
                   <td className="px-6 py-4 text-sm text-gray-500">{user.created_at}</td>
+                  <td className="px-6 py-4 text-sm text-gray-500">{user.last_login_at || <span className="text-gray-300">从未登录</span>}</td>
+                  <td className="px-6 py-4 text-sm text-gray-500">{user.last_transaction_at || <span className="text-gray-300">从未记账</span>}</td>
                 </tr>
               ))
             )}

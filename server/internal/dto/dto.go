@@ -77,10 +77,10 @@ type UpdateTenantSettingsReq struct {
 }
 
 type TenantResp struct {
-	ID        uint64      `json:"id"`
-	Name      string      `json:"name"`
-	OwnerID   uint64      `json:"owner_id"`
-	CreatedAt string      `json:"created_at"`
+	ID        uint64 `json:"id"`
+	Name      string `json:"name"`
+	OwnerID   uint64 `json:"owner_id"`
+	CreatedAt string `json:"created_at"`
 }
 
 type MemberResp struct {
@@ -145,13 +145,13 @@ type BatchDeleteTransactionReq struct {
 }
 
 type TransactionFilter struct {
-	Type        string `form:"type"`
-	CategoryID  uint64 `form:"category_id"`
-	StartDate   string `form:"start_date"`
-	EndDate     string `form:"end_date"`
-	SortBy      string `form:"sort_by"` // "transaction_date" | "created_at"
-	Page        int    `form:"page"`
-	PageSize    int    `form:"page_size"`
+	Type       string `form:"type"`
+	CategoryID uint64 `form:"category_id"`
+	StartDate  string `form:"start_date"`
+	EndDate    string `form:"end_date"`
+	SortBy     string `form:"sort_by"` // "transaction_date" | "created_at"
+	Page       int    `form:"page"`
+	PageSize   int    `form:"page_size"`
 }
 
 func (f *TransactionFilter) Normalize() {
@@ -178,18 +178,18 @@ type TransactionImageResp struct {
 }
 
 type TransactionResp struct {
-	ID              uint64                 `json:"id"`
-	TenantID        uint64                 `json:"tenant_id"`
-	UserID          uint64                 `json:"user_id"`
-	Type            string                 `json:"type"`
-	Amount          float64                `json:"amount"`
-	CategoryID      uint64                 `json:"category_id"`
-	CategoryName    string                 `json:"category_name,omitempty"`
-	MerchantID      uint64                 `json:"merchant_id"`
-	MerchantName    string                 `json:"merchant_name"`
-	TransactionDate string                 `json:"transaction_date"`
-	Note            string                 `json:"note"`
-	CreatedAt       string                 `json:"created_at"`
+	ID              uint64                  `json:"id"`
+	TenantID        uint64                  `json:"tenant_id"`
+	UserID          uint64                  `json:"user_id"`
+	Type            string                  `json:"type"`
+	Amount          float64                 `json:"amount"`
+	CategoryID      uint64                  `json:"category_id"`
+	CategoryName    string                  `json:"category_name,omitempty"`
+	MerchantID      uint64                  `json:"merchant_id"`
+	MerchantName    string                  `json:"merchant_name"`
+	TransactionDate string                  `json:"transaction_date"`
+	Note            string                  `json:"note"`
+	CreatedAt       string                  `json:"created_at"`
 	Images          []*TransactionImageResp `json:"images,omitempty"`
 }
 
@@ -263,14 +263,24 @@ type CategoryItem struct {
 
 // LLMSuggestion LLM 返回的记一笔建议
 type LLMSuggestion struct {
-	Type         string  `json:"type"`          // "expense" | "income"
+	Type         string  `json:"type"` // "expense" | "income"
 	Amount       float64 `json:"amount"`
 	MerchantName string  `json:"merchant_name"`
 	Date         string  `json:"date"`          // "YYYY-MM-DD"
 	CategoryID   uint64  `json:"category_id"`   // 匹配到的分类 ID（0 表示未匹配）
 	CategoryHint string  `json:"category_hint"` // 中文分类提示，如"餐饮"
 	Note         string  `json:"note"`
-	SourceLines  []int   `json:"source_lines"`  // 对应 OCR 原始文字的行号（从 0 开始）
+	SourceLines  []int   `json:"source_lines"` // 对应 OCR 原始文字的行号（从 0 开始）
+}
+
+// LLMUsage 单次 LLM 调用的 token 消耗（缓存命中时为 nil，表示未产生新调用）
+type LLMUsage struct {
+	Provider              string `json:"provider"`
+	Model                 string `json:"model"`
+	PromptCacheHitTokens  int    `json:"prompt_cache_hit_tokens"`
+	PromptCacheMissTokens int    `json:"prompt_cache_miss_tokens"`
+	CompletionTokens      int    `json:"completion_tokens"`
+	TotalTokens           int    `json:"total_tokens"`
 }
 
 // TenantLLMConfigResp 返回给前端的租户 LLM 配置（APIKey 脱敏）
@@ -400,11 +410,11 @@ type MonthSummary struct {
 
 // YearlyStatResp 年统计响应
 type YearlyStatResp struct {
-	Year         int              `json:"year"`
-	Total        StatisticsResp   `json:"total"`
-	Monthly      []*MonthSummary  `json:"monthly"`
-	Categories   []*CategoryStat  `json:"categories"`
-	TopMerchants []*MerchantStat  `json:"top_merchants"`
+	Year         int             `json:"year"`
+	Total        StatisticsResp  `json:"total"`
+	Monthly      []*MonthSummary `json:"monthly"`
+	Categories   []*CategoryStat `json:"categories"`
+	TopMerchants []*MerchantStat `json:"top_merchants"`
 }
 
 // RangeStatResp 日期范围统计响应
@@ -430,16 +440,18 @@ type PlatformLoginResp struct {
 }
 
 type PlatformUserItem struct {
-	ID        uint64 `json:"id"`
-	Username  string `json:"username"`
-	Email     string `json:"email"`
-	CreatedAt string `json:"created_at"`
+	ID                uint64 `json:"id"`
+	Username          string `json:"username"`
+	Email             string `json:"email"`
+	CreatedAt         string `json:"created_at"`
+	LastLoginAt       string `json:"last_login_at"`       // 最近登录时间，空串表示从未登录
+	LastTransactionAt string `json:"last_transaction_at"` // 最近记账时间，空串表示从未记账
 }
 
 type PlatformUserListResp struct {
-	Total int64              `json:"total"`
-	Page  int                `json:"page"`
-	Size  int                `json:"size"`
+	Total int64               `json:"total"`
+	Page  int                 `json:"page"`
+	Size  int                 `json:"size"`
 	Items []*PlatformUserItem `json:"items"`
 }
 
@@ -528,11 +540,45 @@ type CreditLogItem struct {
 	CreatedAt    string `json:"created_at"`
 }
 
+// ========== 定时任务管理 ==========
+
+// CronJobItem 单个定时任务的状态
+type CronJobItem struct {
+	Name         string `json:"name"`
+	Description  string `json:"description"`
+	Schedule     string `json:"schedule"`      // 人类可读的调度描述
+	Running      bool   `json:"running"`       // 是否正在执行
+	NextRunAt    string `json:"next_run_at"`   // 下次执行时间
+	LastRunAt    string `json:"last_run_at"`   // 上次执行时间，空=从未执行
+	LastDuration string `json:"last_duration"` // 上次执行耗时
+	LastError    string `json:"last_error"`    // 上次执行错误，空=成功
+	RunCount     int64  `json:"run_count"`
+	FailCount    int64  `json:"fail_count"`
+}
+
+// CronJobListResp 定时任务列表响应
+type CronJobListResp struct {
+	Jobs []*CronJobItem `json:"jobs"`
+}
+
+// CronTriggerResp 手动触发定时任务响应
+type CronTriggerResp struct {
+	Name      string `json:"name"`
+	Triggered bool   `json:"triggered"`
+}
+
+// CreditLotItem 一个未过期的积分批次（用于展示"XX 积分将于 X 日过期"）
+type CreditLotItem struct {
+	Remaining int64  `json:"remaining"`
+	ExpiresAt string `json:"expires_at"`
+}
+
 // CreditsResp 租户查询自己积分的响应
 type CreditsResp struct {
 	TenantID  uint64           `json:"tenant_id"`
 	Balance   int64            `json:"balance"`
 	Unlimited bool             `json:"unlimited"`
+	Lots      []*CreditLotItem `json:"lots"` // 按过期时间升序，最先过期的在前
 	Logs      []*CreditLogItem `json:"logs"`
 }
 

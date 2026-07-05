@@ -87,6 +87,8 @@ func isRateLimitErr(err error) bool {
 // Client LLM 客户端，封装 langchaingo
 type Client struct {
 	model          llms.Model
+	provider       string // "openai" | "deepseek" | "ollama" 等，仅用于 token 消耗记录标注
+	modelName      string
 	mode           string // "vision" | "ocr_text"
 	timeout        time.Duration
 	promptTemplate string // 自定义提示词模板，空则使用 DefaultPromptTemplate
@@ -139,11 +141,11 @@ func NewClient(cfg config.LLMConfig) (*Client, error) {
 		mode = "ocr_text"
 	}
 
-	return &Client{model: model, mode: mode, timeout: timeout}, nil
+	return &Client{model: model, provider: cfg.Provider, modelName: cfg.Model, mode: mode, timeout: timeout}, nil
 }
 
-// Analyze 分析票据，返回记账建议列表（一张图可能含多笔交易）
-func (c *Client) Analyze(ctx context.Context, imagePath string, rawTexts []string, categories []dto.CategoryItem) ([]*dto.LLMSuggestion, error) {
+// Analyze 分析票据，返回记账建议列表（一张图可能含多笔交易）及本次调用的 token 消耗
+func (c *Client) Analyze(ctx context.Context, imagePath string, rawTexts []string, categories []dto.CategoryItem) ([]*dto.LLMSuggestion, *dto.LLMUsage, error) {
 	ctx, cancel := context.WithTimeout(ctx, c.timeout)
 	defer cancel()
 
@@ -153,9 +155,9 @@ func (c *Client) Analyze(ctx context.Context, imagePath string, rawTexts []strin
 	return c.analyzeOCRText(ctx, rawTexts, categories)
 }
 
-func (c *Client) analyzeOCRText(ctx context.Context, rawTexts []string, categories []dto.CategoryItem) ([]*dto.LLMSuggestion, error) {
+func (c *Client) analyzeOCRText(ctx context.Context, rawTexts []string, categories []dto.CategoryItem) ([]*dto.LLMSuggestion, *dto.LLMUsage, error) {
 	if len(rawTexts) == 0 {
-		return nil, fmt.Errorf("OCR 文本为空")
+		return nil, nil, fmt.Errorf("OCR 文本为空")
 	}
 
 	messages := []llms.MessageContent{
@@ -171,18 +173,19 @@ func (c *Client) analyzeOCRText(ctx context.Context, rawTexts []string, categori
 
 	resp, err := c.generateWithRetry(ctx, messages)
 	if err != nil {
-		return nil, fmt.Errorf("LLM 调用失败: %w", err)
+		return nil, nil, fmt.Errorf("LLM 调用失败: %w", err)
 	}
 	if len(resp.Choices) == 0 {
-		return nil, fmt.Errorf("LLM 返回空响应")
+		return nil, nil, fmt.Errorf("LLM 返回空响应")
 	}
-	return c.parseJSON(resp.Choices[0].Content)
+	suggestions, err := c.parseJSON(resp.Choices[0].Content)
+	return suggestions, c.extractUsage(resp.Choices[0]), err
 }
 
-func (c *Client) analyzeVision(ctx context.Context, imagePath string, categories []dto.CategoryItem) ([]*dto.LLMSuggestion, error) {
+func (c *Client) analyzeVision(ctx context.Context, imagePath string, categories []dto.CategoryItem) ([]*dto.LLMSuggestion, *dto.LLMUsage, error) {
 	dataURI, err := encodeImageAsDataURI(imagePath)
 	if err != nil {
-		return nil, fmt.Errorf("图片编码失败: %w", err)
+		return nil, nil, fmt.Errorf("图片编码失败: %w", err)
 	}
 
 	messages := []llms.MessageContent{
@@ -201,12 +204,48 @@ func (c *Client) analyzeVision(ctx context.Context, imagePath string, categories
 
 	resp, err := c.generateWithRetry(ctx, messages)
 	if err != nil {
-		return nil, fmt.Errorf("LLM vision 调用失败: %w", err)
+		return nil, nil, fmt.Errorf("LLM vision 调用失败: %w", err)
 	}
 	if len(resp.Choices) == 0 {
-		return nil, fmt.Errorf("LLM 返回空响应")
+		return nil, nil, fmt.Errorf("LLM 返回空响应")
 	}
-	return c.parseJSON(resp.Choices[0].Content)
+	suggestions, err := c.parseJSON(resp.Choices[0].Content)
+	return suggestions, c.extractUsage(resp.Choices[0]), err
+}
+
+// extractUsage 从 GenerationInfo 中取出 token 用量；provider 未返回时各字段为 0
+func (c *Client) extractUsage(choice *llms.ContentChoice) *dto.LLMUsage {
+	info := choice.GenerationInfo
+	asInt := func(key string) int {
+		v, ok := info[key]
+		if !ok {
+			return 0
+		}
+		switch n := v.(type) {
+		case int:
+			return n
+		case int64:
+			return int(n)
+		case float64:
+			return int(n)
+		default:
+			return 0
+		}
+	}
+	promptTokens := asInt("PromptTokens")
+	cacheHit := asInt("PromptCachedTokens")
+	cacheMiss := promptTokens - cacheHit
+	if cacheMiss < 0 {
+		cacheMiss = 0
+	}
+	return &dto.LLMUsage{
+		Provider:              c.provider,
+		Model:                 c.modelName,
+		PromptCacheHitTokens:  cacheHit,
+		PromptCacheMissTokens: cacheMiss,
+		CompletionTokens:      asInt("CompletionTokens"),
+		TotalTokens:           asInt("TotalTokens"),
+	}
 }
 
 // generateWithRetry 调用 LLM，遇到 429 限流时指数退避重试

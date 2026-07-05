@@ -475,10 +475,16 @@ export interface CreditLogItem {
   created_at: string
 }
 
+export interface CreditLotItem {
+  remaining: number
+  expires_at: string
+}
+
 export interface CreditsResp {
   tenant_id: number
   balance: number
   unlimited: boolean
+  lots: CreditLotItem[] // 按过期时间升序，最先过期的在前
   logs: CreditLogItem[]
 }
 

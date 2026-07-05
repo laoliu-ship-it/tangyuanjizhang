@@ -1,6 +1,7 @@
 package handler
 
 import (
+	"context"
 	"encoding/json"
 	"log"
 	"net/http"
@@ -8,6 +9,7 @@ import (
 
 	"fandianjizhang/server/internal/dto"
 	"fandianjizhang/server/internal/middleware"
+	"fandianjizhang/server/internal/model"
 	"fandianjizhang/server/internal/repo"
 	"fandianjizhang/server/internal/service"
 	pkgllm "fandianjizhang/server/pkg/llm"
@@ -15,15 +17,42 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
-type LLMHandler struct {
-	llmSvc        service.LLMService
-	categorySvc   service.CategoryService
-	creditsSvc    service.CreditsService
-	ocrRecordRepo repo.OcrRecordRepo
+// llmActionOrc2Bill 大模型将 OCR 文本/图片整理为记账建议的动作名，
+// 同时用作积分消耗类型（credits）和 token 消耗记录（llm_token_usages）的 action 字段
+const llmActionOrc2Bill = "orc2bill"
+
+// recordLLMTokenUsage 落库本次 LLM 调用的 token 消耗，usage 为 nil（如命中缓存）时跳过；失败仅记日志，不影响主流程
+func recordLLMTokenUsage(ctx context.Context, tokenUsageRepo repo.LLMTokenUsageRepo, tenantID uint64, refType string, refID uint64, usage *dto.LLMUsage) {
+	if usage == nil || tokenUsageRepo == nil {
+		return
+	}
+	u := &model.LLMTokenUsage{
+		TenantID:              tenantID,
+		Action:                llmActionOrc2Bill,
+		RefType:               refType,
+		RefID:                 refID,
+		Provider:              usage.Provider,
+		Model:                 usage.Model,
+		PromptCacheHitTokens:  usage.PromptCacheHitTokens,
+		PromptCacheMissTokens: usage.PromptCacheMissTokens,
+		CompletionTokens:      usage.CompletionTokens,
+		TotalTokens:           usage.TotalTokens,
+	}
+	if err := tokenUsageRepo.Create(ctx, u); err != nil {
+		log.Printf("[LLM] tenant=%d token usage 记录失败: %v", tenantID, err)
+	}
 }
 
-func NewLLMHandler(llmSvc service.LLMService, categorySvc service.CategoryService, creditsSvc service.CreditsService, ocrRecordRepo repo.OcrRecordRepo) *LLMHandler {
-	return &LLMHandler{llmSvc: llmSvc, categorySvc: categorySvc, creditsSvc: creditsSvc, ocrRecordRepo: ocrRecordRepo}
+type LLMHandler struct {
+	llmSvc         service.LLMService
+	categorySvc    service.CategoryService
+	creditsSvc     service.CreditsService
+	ocrRecordRepo  repo.OcrRecordRepo
+	tokenUsageRepo repo.LLMTokenUsageRepo
+}
+
+func NewLLMHandler(llmSvc service.LLMService, categorySvc service.CategoryService, creditsSvc service.CreditsService, ocrRecordRepo repo.OcrRecordRepo, tokenUsageRepo repo.LLMTokenUsageRepo) *LLMHandler {
+	return &LLMHandler{llmSvc: llmSvc, categorySvc: categorySvc, creditsSvc: creditsSvc, ocrRecordRepo: ocrRecordRepo, tokenUsageRepo: tokenUsageRepo}
 }
 
 // GetConfig 获取租户 LLM 配置
@@ -129,8 +158,11 @@ func (h *LLMHandler) Analyze(c *gin.Context) {
 
 	// 调用 LLM 分析
 	llmStartTime := time.Now()
-	suggestions, err := h.llmSvc.Analyze(c.Request.Context(), tenantID, ocrRec.ImagePath, rawTexts, categories)
+	suggestions, usage, err := h.llmSvc.Analyze(c.Request.Context(), tenantID, ocrRec.ImagePath, rawTexts, categories)
 	llmDuration := time.Since(llmStartTime)
+
+	// 无论成功失败，只要产生了 token 消耗（非缓存命中）都要落库，这是真实发生的 API 调用成本
+	recordLLMTokenUsage(c.Request.Context(), h.tokenUsageRepo, tenantID, "ocr_record", req.OcrID, usage)
 
 	if err != nil {
 		log.Printf("[LLM] tenant=%d ocr_id=%d 耗时=%.2fs 失败: %v", tenantID, req.OcrID, llmDuration.Seconds(), err)
@@ -141,7 +173,7 @@ func (h *LLMHandler) Analyze(c *gin.Context) {
 	log.Printf("[LLM] tenant=%d ocr_id=%d 耗时=%.2fs 成功，建议数=%d", tenantID, req.OcrID, llmDuration.Seconds(), len(suggestions))
 
 	// LLM 成功后扣积分
-	if deductErr := h.creditsSvc.CheckAndDeduct(c.Request.Context(), tenantID, "llm", "ocr_record", req.OcrID, "AI整理"); deductErr != nil {
+	if deductErr := h.creditsSvc.CheckAndDeduct(c.Request.Context(), tenantID, llmActionOrc2Bill, "ocr_record", req.OcrID, "AI整理"); deductErr != nil {
 		log.Printf("[credits] tenant=%d llm deduct error: %v", tenantID, deductErr)
 		c.JSON(http.StatusOK, dto.Fail(402, "积分不足，请联系管理员充值"))
 		return

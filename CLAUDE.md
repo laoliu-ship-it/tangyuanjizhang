@@ -5,13 +5,21 @@
 ```bash
 # 启动后端 + OCR 服务（MySQL 需本地运行，密码 allgood）
 cd /Users/chen/IdeaProjects/fandianjizhang
-docker compose up -d
+后端
+go run main.go 
 
 # 启动前端（需 Node 22，通过 nvm use 22 切换）
 cd web && npm run dev -- --port 5274
 ```
 
 > 注意：5173 端口被 aiblog 项目占用，固定使用 5274。
+
+## 功能开发流程（分支与发布）
+
+- **每个功能点一个独立分支**，命名规则：`feature-日期-功能点`（如 `feature-20260705-用户活跃时间`）
+- **新功能分支、bug 修复分支必须从 main fork**
+- 功能点开发完毕后合并到 **release 分支**；release 分支最终合并到 **main 分支**
+- 发布命令：`make nana` 发布 release 分支（测试环境），`make prod` 发布 main 分支（生产环境）
 
 ## 编码规范
 
@@ -25,7 +33,10 @@ cd web && npm run dev -- --port 5274
 - **默认分类在 default_categories.go 维护**：注册和创建租户均调用 `createDefaultCategories()`，不在各自 service 中各自维护列表
 - **分析类接口失败必须用 `dto.Fail`**：LLM/OCR 等异步分析接口出错，不能用 `dto.OK` 包裹 `error` 字段返回 `code: 0`，必须用 `dto.Fail(code, message)` 让前端 axios 拦截器能正确捕获
 - **业务错误统一返回 HTTP 200**：所有需要展示给用户的业务错误（含积分不足 code:402、权限不足 code:403 等）必须用 `c.JSON(http.StatusOK, dto.Fail(code, "..."))` 而不是 HTTP 4xx。HTTP 非 200 仅用于协议层错误（401 未认证 → 前端自动跳登录，500 服务崩溃）。这保证 response 拦截器能捕获所有业务错误并自动 reject，前端 catch 块统一读 `err.message` 即可。
-
+- **函数规范** service 和 repo 第一个参数是 context.Context, 返回参数最后一个是error
+- **定时任务统一注册**：所有周期性后台任务必须通过 `internal/cron.Manager` 注册（RegisterInterval/RegisterDaily），禁止在 main.go 散落裸 goroutine；平台管理后台 `/platform/cron` 可查看状态和手动触发
+- **积分必须走批次（lot）模型**：发放积分生成 `credit_lots` 批次（带过期时间），扣费按 expires_at 升序逐批消耗（最近过期优先）；`tenant_credits.balance` 仅是缓存，真相源是批次剩余之和；扣费明细写 `credit_log_details` 保证可追溯
+- **模型 gorm 标签必须带中文 comment**：新增表字段一律加 `comment:中文说明`，落库为列注释
 ### React 前端
 
 - **防御性编程**：所有可能为 null/undefined 的属性访问均使用 `?.` 和 `?? 默认值`，杜绝 `.toFixed()` 等直接调用
@@ -39,7 +50,8 @@ cd web && npm run dev -- --port 5274
 
 - **Go 镜像构建用 vendor 模式**：`go build -mod=vendor`，修改依赖后需在宿主机重新 `go mod vendor`
 - **OCR 服务不传代理 build-args**：利用 OrbStack 的 `proxy.orb.internal` 自动代理，宿主机的 `http_proxy` 环境变量不得透传进 Docker build
-
+### 测试规范
+- **测试文件规范** 前端测试文件放到前端测试目录，后端测试文件，单元测试和单元放一起，集成测试放到集成测试目录
 ## 待办（下次会话）
 
 - [x] 多图上传：左右切换条、排队识别、已保存图片标记

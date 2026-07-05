@@ -13,6 +13,7 @@ import (
 
 	"fandianjizhang/server/config"
 	"fandianjizhang/server/internal/casbin"
+	"fandianjizhang/server/internal/cron"
 	"fandianjizhang/server/internal/dto"
 	"fandianjizhang/server/internal/handler"
 	"fandianjizhang/server/internal/middleware"
@@ -47,6 +48,7 @@ func main() {
 
 	// 自动迁移新增表
 	if err := db.AutoMigrate(
+		&model.User{},
 		&model.Tenant{},
 		&model.TenantMember{},
 		&model.TenantLLMConfig{},
@@ -60,6 +62,9 @@ func main() {
 		&model.StatsCache{},
 		&model.TenantCredits{},
 		&model.CreditLog{},
+		&model.CreditLot{},
+		&model.CreditLogDetail{},
+		&model.LLMTokenUsage{},
 	); err != nil {
 		log.Fatalf("数据库迁移失败: %v", err)
 	}
@@ -67,6 +72,15 @@ func main() {
 	// 补全历史租户的 book_type（幂等，已填充后影响 0 行）
 	if err := db.Exec("UPDATE tenants SET book_type = 'restaurant' WHERE book_type IS NULL OR book_type = ''").Error; err != nil {
 		log.Printf("[migrate] 补全 book_type 失败: %v", err)
+	}
+
+	// 存量积分余额迁移为初始批次（幂等：仅对从未有过批次的租户执行），有效期迁移日起 365 天
+	if err := db.Exec(`INSERT INTO credit_lots (tenant_id, amount, remaining, source, expires_at, created_at)
+		SELECT tc.tenant_id, tc.balance, tc.balance, 'migration', DATE_ADD(NOW(), INTERVAL 365 DAY), NOW()
+		FROM tenant_credits tc
+		WHERE tc.balance > 0
+		  AND NOT EXISTS (SELECT 1 FROM credit_lots cl WHERE cl.tenant_id = tc.tenant_id)`).Error; err != nil {
+		log.Printf("[migrate] 存量积分迁移批次失败: %v", err)
 	}
 
 	// 统计查询复合索引（兼容 MySQL 5.7，先查 information_schema 再建）
@@ -154,6 +168,7 @@ func main() {
 	platformConfigRepo := repo.NewPlatformConfigRepo(db)
 	statsCacheRepo := repo.NewStatsCacheRepo(db)
 	tenantCreditsRepo := repo.NewTenantCreditsRepo(db)
+	llmTokenUsageRepo := repo.NewLLMTokenUsageRepo(db)
 
 	// 初始化 OCR 引擎（带可配置缓存）
 	ocrEngine, err := pkgocr.NewEngine(cfg, platformConfigRepo)
@@ -169,6 +184,21 @@ func main() {
 
 	// 初始化积分 Service
 	creditsSvc := service.NewCreditsService(tenantCreditsRepo, platformConfigRepo)
+
+	// 定时任务统一管理器：所有周期性后台任务在此注册，禁止散落裸 goroutine
+	cronManager := cron.NewManager()
+	// 积分到期清理：启动时清一次，之后每小时兜底一次（扣费/发放时还有惰性清理）
+	cronManager.RegisterInterval("credits_expire", "清理到期积分批次并写作废流水", time.Hour, 5*time.Minute, true,
+		func(ctx context.Context) error {
+			total, err := creditsSvc.ExpireDueCredits(ctx)
+			if err != nil {
+				return err
+			}
+			if total > 0 {
+				log.Printf("[credits] 到期积分清理完成，作废 %d 积分", total)
+			}
+			return nil
+		})
 
 	// 初始化 Service 层
 	authSvc := service.NewAuthService(userRepo, tenantRepo, tenantMemberRepo, categoryRepo, creditsSvc, platformConfigRepo, cfg)
@@ -190,8 +220,8 @@ func main() {
 	categoryHandler := handler.NewCategoryHandler(categorySvc)
 	merchantHandler := handler.NewMerchantHandler(merchantSvc)
 	transactionHandler := handler.NewTransactionHandler(transactionSvc)
-	ocrHandler := handler.NewOCRHandler(ocrSvc, merchantSvc, categorySvc, llmSvcI, creditsSvc, store, mediaRepo, ocrRecordRepo, cfg.Upload)
-	llmHandler := handler.NewLLMHandler(llmSvcI, categorySvc, creditsSvc, ocrRecordRepo)
+	ocrHandler := handler.NewOCRHandler(ocrSvc, merchantSvc, categorySvc, llmSvcI, creditsSvc, store, mediaRepo, ocrRecordRepo, llmTokenUsageRepo, cfg.Upload)
+	llmHandler := handler.NewLLMHandler(llmSvcI, categorySvc, creditsSvc, ocrRecordRepo, llmTokenUsageRepo)
 	statisticsHandler := handler.NewStatisticsHandler(statisticsSvc)
 	exporter := excel.NewExporter()
 	exportHandler := handler.NewExportHandler(transactionSvc, exporter, categoryRepo, transactionRepo, tenantRepo)
@@ -199,6 +229,7 @@ func main() {
 	platformAdminSvc := service.NewPlatformAdminService(platformAdminRepo, platformStatsRepo, userRepo, platformConfigRepo, tenantRepo, creditsSvc, cfg)
 	platformAdminHandler := handler.NewPlatformAdminHandler(platformAdminSvc, llmSvcI)
 	creditsHandler := handler.NewCreditsHandler(creditsSvc)
+	cronHandler := handler.NewCronHandler(cronManager)
 
 	// 初始化路由
 	r := gin.Default()
@@ -248,21 +279,21 @@ func main() {
 		tenant.GET("/tenants/:id/members",
 			tenantHandler.ListMembers)
 
-			// RBAC 角色管理
-			tenant.GET("/permissions",
-				rbacHandler.ListPermissions)
-			tenant.GET("/tenants/:id/roles",
-				middleware.Casbin(enforcerPool, "tenant", "read"),
-				rbacHandler.ListRoles)
-			tenant.POST("/tenants/:id/roles",
-				middleware.Casbin(enforcerPool, "tenant", "write"),
-				rbacHandler.CreateRole)
-			tenant.PUT("/tenants/:id/roles/:roleId",
-				middleware.Casbin(enforcerPool, "tenant", "write"),
-				rbacHandler.UpdateRole)
-			tenant.DELETE("/tenants/:id/roles/:roleId",
-				middleware.Casbin(enforcerPool, "tenant", "write"),
-				rbacHandler.DeleteRole)
+		// RBAC 角色管理
+		tenant.GET("/permissions",
+			rbacHandler.ListPermissions)
+		tenant.GET("/tenants/:id/roles",
+			middleware.Casbin(enforcerPool, "tenant", "read"),
+			rbacHandler.ListRoles)
+		tenant.POST("/tenants/:id/roles",
+			middleware.Casbin(enforcerPool, "tenant", "write"),
+			rbacHandler.CreateRole)
+		tenant.PUT("/tenants/:id/roles/:roleId",
+			middleware.Casbin(enforcerPool, "tenant", "write"),
+			rbacHandler.UpdateRole)
+		tenant.DELETE("/tenants/:id/roles/:roleId",
+			middleware.Casbin(enforcerPool, "tenant", "write"),
+			rbacHandler.DeleteRole)
 
 		// OCR 上传（需增改账目权限）
 		tenant.POST("/upload/ocr",
@@ -446,6 +477,9 @@ func main() {
 			// 平台 LLM 配置
 			platformAuth.GET("/llm-config", platformAdminHandler.GetPlatformLLMConfig)
 			platformAuth.PUT("/llm-config", platformAdminHandler.UpdatePlatformLLMConfig)
+			// 定时任务管理
+			platformAuth.GET("/cron/jobs", cronHandler.ListJobs)
+			platformAuth.POST("/cron/jobs/:name/run", cronHandler.TriggerJob)
 		}
 	}
 
@@ -453,7 +487,12 @@ func main() {
 	ensurePlatformAdmin(db)
 
 	// 凌晨3点定时预计算统计缓存
-	go scheduleDailyStatsJob(statisticsSvc)
+	// 每天凌晨3点统计预计算
+	cronManager.RegisterDaily("daily_stats", "统计数据预计算（昨日汇总缓存）", 3, 0, 10*time.Minute,
+		func(ctx context.Context) error {
+			return statisticsSvc.RunDailyJob(ctx)
+		})
+	cronManager.Start()
 
 	// 静态文件服务（上传的图片）
 	r.Static("/uploads", cfg.Upload.Path)
@@ -539,21 +578,3 @@ func getEnv(key, defaultVal string) string {
 	return defaultVal
 }
 
-// scheduleDailyStatsJob 每天凌晨3点执行统计预计算
-func scheduleDailyStatsJob(svc service.StatisticsService) {
-	for {
-		now := time.Now()
-		next := time.Date(now.Year(), now.Month(), now.Day(), 3, 0, 0, 0, now.Location())
-		if !next.After(now) {
-			next = next.Add(24 * time.Hour)
-		}
-		log.Printf("[stats job] 下次执行时间: %s", next.Format("2006-01-02 15:04:05"))
-		time.Sleep(time.Until(next))
-
-		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
-		if err := svc.RunDailyJob(ctx); err != nil {
-			log.Printf("[stats job] 执行失败: %v", err)
-		}
-		cancel()
-	}
-}

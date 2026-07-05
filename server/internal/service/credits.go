@@ -3,11 +3,15 @@ package service
 import (
 	"context"
 	"strconv"
+	"time"
 
 	"fandianjizhang/server/internal/dto"
 	"fandianjizhang/server/internal/model"
 	"fandianjizhang/server/internal/repo"
 )
+
+// defaultCreditsValidityDays 积分默认有效期（天），platform_configs 未配置时兜底
+const defaultCreditsValidityDays = 365
 
 // ErrInsufficientCredits 积分不足错误（透传给 handler 返回 402）
 var ErrInsufficientCredits = repo.ErrInsufficientCredits
@@ -17,8 +21,10 @@ type CreditsService interface {
 	GetBalance(ctx context.Context, tenantID uint64) (*dto.CreditsResp, error)
 	// CheckAndDeduct 按 action 读取单价并扣费；单价为0则跳过
 	CheckAndDeduct(ctx context.Context, tenantID uint64, action, refType string, refID uint64, note string) error
-	// Gift 赠送积分（注册赠送 / 管理员充值均走此方法）
+	// Gift 发放积分（注册赠送 / 管理员充值均走此方法），生成按配置有效期到期的批次；负数为管理员扣减
 	Gift(ctx context.Context, tenantID uint64, delta int64, action, note string) error
+	// ExpireDueCredits 清理所有租户的到期积分并写 expire 流水，返回作废总数（定时任务用）
+	ExpireDueCredits(ctx context.Context) (int64, error)
 	// SetUnlimited 设置/取消无限制白名单
 	SetUnlimited(ctx context.Context, tenantID uint64, unlimited bool) error
 	// GetLogs 分页查询流水；amountType: "income"/"expense"/""
@@ -51,10 +57,22 @@ func (s *creditsService) GetBalance(ctx context.Context, tenantID uint64) (*dto.
 	for _, l := range logs {
 		items = append(items, creditLogToDTO(l))
 	}
+	lots, err := s.creditsRepo.ListActiveLots(ctx, tenantID)
+	if err != nil {
+		return nil, err
+	}
+	lotItems := make([]*dto.CreditLotItem, 0, len(lots))
+	for _, lot := range lots {
+		lotItems = append(lotItems, &dto.CreditLotItem{
+			Remaining: lot.Remaining,
+			ExpiresAt: lot.ExpiresAt.Format("2006-01-02 15:04:05"),
+		})
+	}
 	return &dto.CreditsResp{
 		TenantID:  tenantID,
 		Balance:   c.Balance,
 		Unlimited: c.Unlimited,
+		Lots:      lotItems,
 		Logs:      items,
 	}, nil
 }
@@ -80,7 +98,25 @@ func (s *creditsService) CheckAndDeduct(ctx context.Context, tenantID uint64, ac
 }
 
 func (s *creditsService) Gift(ctx context.Context, tenantID uint64, delta int64, action, note string) error {
-	return s.creditsRepo.Gift(ctx, tenantID, delta, action, note)
+	expiresAt := time.Now().AddDate(0, 0, s.getValidityDays(ctx))
+	return s.creditsRepo.Gift(ctx, tenantID, delta, expiresAt, action, note)
+}
+
+func (s *creditsService) ExpireDueCredits(ctx context.Context) (int64, error) {
+	return s.creditsRepo.ExpireDueLots(ctx)
+}
+
+// getValidityDays 从 platform_configs 读取积分有效期（天），未配置或非法时返回默认值
+func (s *creditsService) getValidityDays(ctx context.Context) int {
+	cfg, err := s.configRepo.GetByKey(ctx, model.ConfigKeyCreditsValidityDays)
+	if err != nil || cfg == nil {
+		return defaultCreditsValidityDays
+	}
+	v, err := strconv.Atoi(cfg.ConfigValue)
+	if err != nil || v <= 0 {
+		return defaultCreditsValidityDays
+	}
+	return v
 }
 
 func (s *creditsService) SetUnlimited(ctx context.Context, tenantID uint64, unlimited bool) error {
@@ -156,8 +192,8 @@ func actionToConfigKey(action string) string {
 		return model.ConfigKeyCreditsPerUpload
 	case "ocr":
 		return model.ConfigKeyCreditsPerOCR
-	case "llm":
-		return model.ConfigKeyCreditsPerLLM
+	case "orc2bill":
+		return model.ConfigKeyCreditsPerOrc2bill
 	case "storage":
 		return model.ConfigKeyCreditsPerGBPerDay
 	default:

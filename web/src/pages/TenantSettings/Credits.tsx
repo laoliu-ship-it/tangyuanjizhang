@@ -1,13 +1,15 @@
 import { useState, useEffect, useCallback } from 'react'
-import { creditsApi, type CreditLogItem } from '../../services/api'
+import { creditsApi, type CreditLogItem, type CreditLotItem } from '../../services/api'
 
 const ACTION_LABEL: Record<string, string> = {
   upload: '图片上传',
   ocr: 'OCR识别',
-  llm: 'AI整理',
+  llm: 'AI整理', // 历史动作名（orc2bill 上线前的流水），保留展示
+  orc2bill: 'AI整理',
   gift: '注册赠送',
   admin_adjust: '管理员调整',
   storage: '存储扣费',
+  expire: '到期作废',
 }
 
 function actionLabel(action: string) {
@@ -21,6 +23,7 @@ const PAGE_SIZE = 20
 export default function Credits() {
   const [balance, setBalance] = useState<number | null>(null)
   const [unlimited, setUnlimited] = useState(false)
+  const [lots, setLots] = useState<CreditLotItem[]>([])
   const [balanceLoading, setBalanceLoading] = useState(true)
 
   const [logs, setLogs] = useState<CreditLogItem[]>([])
@@ -35,6 +38,7 @@ export default function Credits() {
         const data = res.data.data
         setBalance(data?.balance ?? 0)
         setUnlimited(data?.unlimited ?? false)
+        setLots(data?.lots ?? [])
       })
       .catch(() => {})
       .finally(() => setBalanceLoading(false))
@@ -84,6 +88,11 @@ export default function Credits() {
         )}
         {unlimited && (
           <p className="text-xs text-blue-400 mt-1">已开启白名单，不受积分限制</p>
+        )}
+        {!unlimited && !balanceLoading && (lots?.length ?? 0) > 0 && (
+          <p className="text-xs text-amber-500 mt-1">
+            {lots[0]?.remaining?.toLocaleString() ?? 0} 积分将于 {lots[0]?.expires_at?.slice(0, 10) ?? '—'} 过期，将优先扣除
+          </p>
         )}
       </div>
 

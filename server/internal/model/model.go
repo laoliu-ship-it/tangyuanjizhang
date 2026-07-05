@@ -11,6 +11,7 @@ type User struct {
 	Email        string     `gorm:"uniqueIndex;size:100;not null" json:"email"`
 	PasswordHash string     `gorm:"size:255;not null" json:"-"`
 	RegisterIP   string     `gorm:"size:45;default:''" json:"-"`
+	LastLoginAt  *time.Time `gorm:"comment:最近登录时间" json:"last_login_at"`
 	CreatedAt    time.Time  `json:"created_at"`
 	DeletedAt    *time.Time `gorm:"index" json:"-"`
 }
@@ -146,21 +147,41 @@ func (StatsCache) TableName() string { return "stats_cache" }
 
 // TenantLLMConfig 租户 LLM 配置表（每个租户一条记录）
 type TenantLLMConfig struct {
-	ID          uint64    `gorm:"primaryKey;autoIncrement" json:"id"`
-	TenantID    uint64    `gorm:"not null;uniqueIndex" json:"tenant_id"`
-	Enabled     bool      `gorm:"default:false" json:"enabled"`
-	UsePlatform bool      `gorm:"default:true" json:"use_platform"` // true=使用平台配置，false=使用租户自己的key
-	Provider    string    `gorm:"size:50;default:'openai'" json:"provider"`
-	BaseURL     string    `gorm:"size:255;default:''" json:"base_url"`
-	APIKey      string    `gorm:"size:500;default:''" json:"-"` // 不直接返回给前端
+	ID           uint64    `gorm:"primaryKey;autoIncrement" json:"id"`
+	TenantID     uint64    `gorm:"not null;uniqueIndex" json:"tenant_id"`
+	Enabled      bool      `gorm:"default:false" json:"enabled"`
+	UsePlatform  bool      `gorm:"default:true" json:"use_platform"` // true=使用平台配置，false=使用租户自己的key
+	Provider     string    `gorm:"size:50;default:'openai'" json:"provider"`
+	BaseURL      string    `gorm:"size:255;default:''" json:"base_url"`
+	APIKey       string    `gorm:"size:500;default:''" json:"-"` // 不直接返回给前端
 	Model        string    `gorm:"size:100;default:'gpt-4o'" json:"model"`
 	Mode         string    `gorm:"size:20;default:'ocr_text'" json:"mode"` // "vision" | "ocr_text"
 	CustomPrompt string    `gorm:"type:text" json:"-"`                     // 自定义识别提示词，空=使用平台默认
-	CreatedAt   time.Time `json:"created_at"`
-	UpdatedAt   time.Time `json:"updated_at"`
+	CreatedAt    time.Time `json:"created_at"`
+	UpdatedAt    time.Time `json:"updated_at"`
 }
 
 func (TenantLLMConfig) TableName() string { return "tenant_llm_configs" }
+
+// LLMTokenUsage 大模型对话 token 消耗记录（按租户隔离，每次 LLM 分析调用写一条）
+// (tenant_id, action, ref_type, ref_id) 唯一：与 CreditLog 的幂等键保持一致，
+// 同一资源同一动作只落一条 token 记录，防止重复点击/请求竞态导致重复入账
+type LLMTokenUsage struct {
+	ID                    uint64    `gorm:"primaryKey;autoIncrement" json:"id"`
+	TenantID              uint64    `gorm:"not null;uniqueIndex:uniq_llm_usage_ref,priority:1" json:"tenant_id"`
+	Action                string    `gorm:"size:30;not null;uniqueIndex:uniq_llm_usage_ref,priority:2" json:"action"`              // orc2bill 等，与 CreditLog.Action 对应
+	RefType               string    `gorm:"size:50;not null;default:'';uniqueIndex:uniq_llm_usage_ref,priority:3" json:"ref_type"` // 关联资源类型，如 "ocr_record"
+	RefID                 uint64    `gorm:"not null;default:0;uniqueIndex:uniq_llm_usage_ref,priority:4" json:"ref_id"`
+	Provider              string    `gorm:"size:50;default:''" json:"provider"`
+	Model                 string    `gorm:"size:100;default:''" json:"model"`
+	PromptCacheHitTokens  int       `gorm:"default:0" json:"prompt_cache_hit_tokens"`  // 命中缓存的输入 token 数
+	PromptCacheMissTokens int       `gorm:"default:0" json:"prompt_cache_miss_tokens"` // 未命中缓存的输入 token 数
+	CompletionTokens      int       `gorm:"default:0" json:"completion_tokens"`
+	TotalTokens           int       `gorm:"default:0" json:"total_tokens"`
+	CreatedAt             time.Time `gorm:"index" json:"created_at"`
+}
+
+func (LLMTokenUsage) TableName() string { return "llm_token_usages" }
 
 // MediaFile 租户媒体文件表（用于去重和资源统计）
 type MediaFile struct {
@@ -178,8 +199,8 @@ func (MediaFile) TableName() string { return "media_files" }
 
 // TenantSettings 租户通用设置表（每个租户一条记录，不存在时用默认值）
 type TenantSettings struct {
-	ID                  uint64    `gorm:"primaryKey;autoIncrement" json:"id"`
-	TenantID            uint64    `gorm:"not null;uniqueIndex" json:"tenant_id"`
+	ID       uint64 `gorm:"primaryKey;autoIncrement" json:"id"`
+	TenantID uint64 `gorm:"not null;uniqueIndex" json:"tenant_id"`
 	// 不加 gorm default 标签：带 default 的 bool 字段在 INSERT 时零值(false)会被 GORM 跳过，
 	// 导致首次保存"关闭"被 DB 默认值覆盖；默认值由 service 层 GetSettings 提供
 	RequireExpenseImage bool      `json:"require_expense_image"` // 支出记录是否必须上传图片
@@ -220,20 +241,21 @@ const (
 	ConfigKeyLLMCacheEnabled = "llm_cache_enabled" // "true" 或 "false"
 
 	// 积分计费配置键
-	ConfigKeyCreditsPerUpload     = "credits_per_upload"      // 每次上传新文件扣积分
-	ConfigKeyCreditsPerOCR        = "credits_per_ocr"         // 每次 OCR 识别扣积分
-	ConfigKeyCreditsPerLLM        = "credits_per_llm"         // 每次 AI 整理扣积分
-	ConfigKeyCreditsPerGBPerDay   = "credits_per_gb_per_day"  // 每 G 存储每天扣积分（预留）
-	ConfigKeyCreditsNewUserGift   = "credits_new_user_gift"   // 新用户注册赠送积分
-	ConfigKeyMaxAccountsPerIP     = "credits_max_accounts_per_ip" // 同IP最多多少账号可获赠积分
+	ConfigKeyCreditsPerUpload   = "credits_per_upload"          // 每次上传新文件扣积分
+	ConfigKeyCreditsPerOCR      = "credits_per_ocr"             // 每次 OCR 识别扣积分
+	ConfigKeyCreditsPerOrc2bill = "credits_per_llm"             // 每次 AI 整理（OCR 转记账）扣积分；key 名沿用历史值 credits_per_llm，避免影响已有 platform_configs 数据
+	ConfigKeyCreditsPerGBPerDay = "credits_per_gb_per_day"      // 每 G 存储每天扣积分（预留）
+	ConfigKeyCreditsNewUserGift = "credits_new_user_gift"       // 新用户注册赠送积分
+	ConfigKeyMaxAccountsPerIP   = "credits_max_accounts_per_ip" // 同IP最多多少账号可获赠积分
+	ConfigKeyCreditsValidityDays = "credits_validity_days"      // 积分有效期（天），发放时刻起算
 
 	// 平台 LLM 配置键
-	ConfigKeyPlatformLLMEnabled  = "platform_llm_enabled"   // "true"/"false"
-	ConfigKeyPlatformLLMProvider = "platform_llm_provider"  // "openai"/"azure"等
-	ConfigKeyPlatformLLMBaseURL  = "platform_llm_base_url"  // 自定义端点，空=用默认
-	ConfigKeyPlatformLLMAPIKey   = "platform_llm_api_key"   // 平台 API Key
-	ConfigKeyPlatformLLMModel    = "platform_llm_model"     // e.g. "gpt-4o"
-	ConfigKeyPlatformLLMMode     = "platform_llm_mode"      // "ocr_text"/"image"
+	ConfigKeyPlatformLLMEnabled  = "platform_llm_enabled"  // "true"/"false"
+	ConfigKeyPlatformLLMProvider = "platform_llm_provider" // "openai"/"azure"等
+	ConfigKeyPlatformLLMBaseURL  = "platform_llm_base_url" // 自定义端点，空=用默认
+	ConfigKeyPlatformLLMAPIKey   = "platform_llm_api_key"  // 平台 API Key
+	ConfigKeyPlatformLLMModel    = "platform_llm_model"    // e.g. "gpt-4o"
+	ConfigKeyPlatformLLMMode     = "platform_llm_mode"     // "ocr_text"/"image"
 )
 
 // 默认配置值
@@ -248,10 +270,11 @@ var DefaultPlatformConfigs = map[string]struct {
 	// 积分计费默认值
 	ConfigKeyCreditsPerUpload:   {Value: "5", Description: "每次上传新文件扣除积分数"},
 	ConfigKeyCreditsPerOCR:      {Value: "10", Description: "每次 OCR 识别扣除积分数"},
-	ConfigKeyCreditsPerLLM:      {Value: "20", Description: "每次 AI 整理扣除积分数"},
+	ConfigKeyCreditsPerOrc2bill: {Value: "20", Description: "每次 AI 整理（OCR 转记账）扣除积分数"},
 	ConfigKeyCreditsPerGBPerDay: {Value: "50", Description: "每 G 存储每天扣除积分数（预留）"},
 	ConfigKeyCreditsNewUserGift: {Value: "1000", Description: "新用户注册赠送积分数"},
 	ConfigKeyMaxAccountsPerIP:   {Value: "3", Description: "同一 IP 最多多少账号可获赠注册积分（0=不限制）"},
+	ConfigKeyCreditsValidityDays: {Value: "365", Description: "积分有效期（天），从发放时刻起算"},
 	// 平台 LLM 配置默认值（空值=未配置）
 	ConfigKeyPlatformLLMEnabled:  {Value: "false", Description: "平台 LLM 是否启用"},
 	ConfigKeyPlatformLLMProvider: {Value: "openai", Description: "平台 LLM Provider（openai/azure等）"},
@@ -265,7 +288,7 @@ var DefaultPlatformConfigs = map[string]struct {
 type TenantCredits struct {
 	ID        uint64    `gorm:"primaryKey;autoIncrement" json:"id"`
 	TenantID  uint64    `gorm:"uniqueIndex;not null" json:"tenant_id"`
-	Balance   int64     `gorm:"not null;default:0" json:"balance"`     // 当前积分余额
+	Balance   int64     `gorm:"not null;default:0" json:"balance"`       // 当前积分余额
 	Unlimited bool      `gorm:"not null;default:false" json:"unlimited"` // true=无限制白名单
 	UpdatedAt time.Time `json:"updated_at"`
 }
@@ -276,9 +299,9 @@ func (TenantCredits) TableName() string { return "tenant_credits" }
 type CreditLog struct {
 	ID           uint64    `gorm:"primaryKey;autoIncrement" json:"id"`
 	TenantID     uint64    `gorm:"not null;index" json:"tenant_id"`
-	Amount       int64     `gorm:"not null" json:"amount"`           // 正=充值/赠送, 负=消耗
-	Action       string    `gorm:"size:30;not null" json:"action"`   // upload/ocr/llm/storage/gift/admin_adjust
-	BalanceAfter int64     `gorm:"not null" json:"balance_after"`    // 操作后余额快照；unlimited 时为 -1
+	Amount       int64     `gorm:"not null" json:"amount"`             // 正=充值/赠送, 负=消耗
+	Action       string    `gorm:"size:30;not null" json:"action"`     // upload/ocr/orc2bill/storage/gift/admin_adjust（llm 为历史动作名，已由 orc2bill 取代）
+	BalanceAfter int64     `gorm:"not null" json:"balance_after"`      // 操作后余额快照；unlimited 时为 -1
 	RefType      string    `gorm:"size:50;default:''" json:"ref_type"` // 关联资源类型，如 "ocr_record"
 	RefID        uint64    `gorm:"default:0" json:"ref_id"`            // 关联资源 ID
 	Note         string    `gorm:"size:200;default:''" json:"note"`
@@ -286,3 +309,26 @@ type CreditLog struct {
 }
 
 func (CreditLog) TableName() string { return "credit_logs" }
+
+// CreditLot 积分批次表：每次充值/赠送生成一条，扣费按 expires_at 升序逐批消耗（最近过期优先）
+type CreditLot struct {
+	ID        uint64    `gorm:"primaryKey;autoIncrement;comment:批次ID" json:"id"`
+	TenantID  uint64    `gorm:"not null;index:idx_lot_deduct,priority:1;comment:租户ID" json:"tenant_id"`
+	Amount    int64     `gorm:"not null;comment:原始发放数量（不变，追溯用）" json:"amount"`
+	Remaining int64     `gorm:"not null;comment:剩余可用数量" json:"remaining"`
+	Source    string    `gorm:"size:30;not null;comment:来源：gift/admin_adjust/migration，与发放流水action一致" json:"source"`
+	ExpiresAt time.Time `gorm:"not null;index:idx_lot_deduct,priority:2;index:idx_lot_expire;comment:过期时间" json:"expires_at"`
+	CreatedAt time.Time `gorm:"comment:发放时间" json:"created_at"`
+}
+
+func (CreditLot) TableName() string { return "credit_lots" }
+
+// CreditLogDetail 扣费明细表：一条扣费流水从哪些批次各扣了多少（追溯用）
+type CreditLogDetail struct {
+	ID     uint64 `gorm:"primaryKey;autoIncrement;comment:明细ID" json:"id"`
+	LogID  uint64 `gorm:"not null;index;comment:流水ID，关联credit_logs.id" json:"log_id"`
+	LotID  uint64 `gorm:"not null;index;comment:批次ID，关联credit_lots.id" json:"lot_id"`
+	Amount int64  `gorm:"not null;comment:从该批次扣除的数量（正数）" json:"amount"`
+}
+
+func (CreditLogDetail) TableName() string { return "credit_log_details" }

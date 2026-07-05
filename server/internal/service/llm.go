@@ -16,8 +16,8 @@ import (
 
 // LLMService 提供 LLM 分析能力，支持租户级配置热加载
 type LLMService interface {
-	// Analyze 分析票据，返回记账建议列表（一张图可能含多笔交易）
-	Analyze(ctx context.Context, tenantID uint64, imagePath string, rawTexts []string, categories []dto.CategoryItem) ([]*dto.LLMSuggestion, error)
+	// Analyze 分析票据，返回记账建议列表（一张图可能含多笔交易）及本次调用的 token 消耗
+	Analyze(ctx context.Context, tenantID uint64, imagePath string, rawTexts []string, categories []dto.CategoryItem) ([]*dto.LLMSuggestion, *dto.LLMUsage, error)
 	// GetConfig 获取当前租户的 LLM 配置（用于前端展示）
 	GetConfig(ctx context.Context, tenantID uint64) (*dto.TenantLLMConfigResp, error)
 	// SaveConfig 保存租户 LLM 配置，自动使新配置生效
@@ -31,8 +31,8 @@ type LLMService interface {
 }
 
 type llmService struct {
-	platformCfg    config.LLMConfig
-	repo           repo.TenantLLMConfigRepo
+	platformCfg     config.LLMConfig
+	repo            repo.TenantLLMConfigRepo
 	platformCfgRepo repo.PlatformConfigRepo
 
 	// 每租户缓存的 LLM 客户端，避免每次请求重建连接
@@ -110,13 +110,13 @@ func (s *llmService) loadPlatformLLMConfig(ctx context.Context) config.LLMConfig
 }
 
 // Analyze 先查租户配置，决定用平台 key 还是自己的 key，再调用 LLM
-func (s *llmService) Analyze(ctx context.Context, tenantID uint64, imagePath string, rawTexts []string, categories []dto.CategoryItem) ([]*dto.LLMSuggestion, error) {
+func (s *llmService) Analyze(ctx context.Context, tenantID uint64, imagePath string, rawTexts []string, categories []dto.CategoryItem) ([]*dto.LLMSuggestion, *dto.LLMUsage, error) {
 	client, err := s.getOrBuildClient(ctx, tenantID)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	if client == nil {
-		return nil, fmt.Errorf("LLM 未配置或未启用")
+		return nil, nil, fmt.Errorf("LLM 未配置或未启用")
 	}
 	return client.Analyze(ctx, imagePath, rawTexts, categories)
 }
