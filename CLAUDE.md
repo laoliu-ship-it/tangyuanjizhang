@@ -1,14 +1,24 @@
 # 饭店记账 — 开发规范
 
+## 环境规范（3 个环境）
+
+| 环境 | 命令 | 说明 |
+|------|------|------|
+| 开发环境 | `make local` | 本地启动；已在跑则销毁重启。共用测试环境数据库 |
+| 测试环境 | `make qa` | 发布 release 分支到 nana 服务器，发布前验收 |
+| 正式环境 | `make prod` | 发布 main 分支。**大变更必须先列出上线步骤，依次执行保证高质量上线** |
+
 ## 项目运行
 
 ```bash
-# 启动后端 + OCR 服务（MySQL 需本地运行，密码 allgood）
-cd /Users/chen/IdeaProjects/fandianjizhang
-后端
-go run main.go 
+# 一键启动/销毁重启 开发环境（后端 :8080 + 前端 :5274，日志在 logs/）
+make local
 
-# 启动前端（需 Node 22，通过 nvm use 22 切换）
+# 手动方式：
+# 后端（MySQL 需本地运行，密码 allgood）
+cd server && go run ./cmd
+
+# 前端（需 Node 22，通过 nvm use 22 切换）
 cd web && npm run dev -- --port 5274
 ```
 
@@ -19,7 +29,7 @@ cd web && npm run dev -- --port 5274
 - **每个功能点一个独立分支**，命名规则：`feature-日期-功能点`（如 `feature-20260705-用户活跃时间`）
 - **新功能分支、bug 修复分支必须从 main fork**
 - 功能点开发完毕后合并到 **release 分支**；release 分支最终合并到 **main 分支**
-- 发布命令：`make nana` 发布 release 分支（测试环境），`make prod` 发布 main 分支（生产环境）
+- 发布命令：`make qa` 发布 release 分支（测试环境），`make prod` 发布 main 分支（正式环境）
 
 ## 编码规范
 

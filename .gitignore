@@ -10,3 +10,4 @@ dist/server
 .DS_Store
 .idea/
 fnos/app/server
+logs/

@@ -7,7 +7,12 @@ FNOS_SRC    := $(CURDIR)/fnos
 APP_VERSION := $(shell grep '^version' fnos/manifest | awk '{print $$3}')
 FPK_NAME    := fandianjizhang.fpk
 
-.PHONY: all build deploy fnos-build fnos-deploy clean nana
+.PHONY: all build deploy fnos-build fnos-deploy clean local qa prod
+
+# ── 环境说明 ─────────────────────────────────────────────────
+#   开发环境：本地，make local 启动（已在跑则销毁重启），共用测试环境数据库
+#   测试环境：make qa 发布 release 分支，发布前验收
+#   正式环境：make prod 发布 main 分支，大变更必须先列上线步骤依次执行
 
 # 一键：构建 + 打包 + 发布
 all: build fnos-deploy
@@ -53,12 +58,24 @@ deploy: build
 	@echo "==> 普通部署（systemd）"
 	bash deploy.sh
 
-# ── 部署到生产服务器 ddd.com（快速发布 Go 二进制）─────────────
+# ── 正式环境：部署到生产服务器 ddd.com（快速发布 Go 二进制）───
 prod:
 	@bash scripts/deploy-server.sh
 
-# ── 部署到 nana 服务器（deploy 的别名）────────────────────────
-nana: deploy
+# ── 测试环境：部署到 nana 服务器（deploy 的别名）──────────────
+qa: deploy
+
+# ── 开发环境：本地启动 / 销毁重启（后端 :8080 + 前端 :5274）───
+local:
+	@echo "==> 销毁已有本地进程（后端 :8080 / 前端 :5274）"
+	-@lsof -ti:8080 | xargs kill -9 2>/dev/null || true
+	-@lsof -ti:5274 | xargs kill -9 2>/dev/null || true
+	@mkdir -p logs
+	@echo "==> 启动后端（日志 logs/server.log）"
+	cd server && nohup go run ./cmd > ../logs/server.log 2>&1 &
+	@echo "==> 启动前端（日志 logs/web.log）"
+	cd web && nohup npm run dev -- --port 5274 > ../logs/web.log 2>&1 &
+	@echo "==> 开发环境已启动：后端 http://localhost:8080  前端 http://localhost:5274"
 
 clean:
 	rm -f fnos/app/server
