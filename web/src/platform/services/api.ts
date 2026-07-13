@@ -52,6 +52,8 @@ export interface PlatformUserItem {
   created_at: string
   last_login_at: string
   last_transaction_at: string
+  credit_balance: number
+  credit_unlimited: boolean
 }
 
 export interface PlatformUserListResp {

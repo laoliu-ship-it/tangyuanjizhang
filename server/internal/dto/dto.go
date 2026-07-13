@@ -446,6 +446,8 @@ type PlatformUserItem struct {
 	CreatedAt         string `json:"created_at"`
 	LastLoginAt       string `json:"last_login_at"`       // 最近登录时间，空串表示从未登录
 	LastTransactionAt string `json:"last_transaction_at"` // 最近记账时间，空串表示从未记账
+	CreditBalance     int64  `json:"credit_balance"`      // 名下所有账本剩余积分之和
+	CreditUnlimited   bool   `json:"credit_unlimited"`    // 名下是否有账本被设为无限积分白名单
 }
 
 type PlatformUserListResp struct {

@@ -44,6 +44,55 @@ func (r *fakeStatsRepo) CountTenantsByUserID(ctx context.Context, userID uint64)
 	return 0, nil
 }
 
+// fakeTenantRepo 内存版租户仓库，仅覆盖 ListUsers 用到的方法
+type fakeTenantRepo struct {
+	tenantsByUser map[uint64][]*model.Tenant
+}
+
+func (r *fakeTenantRepo) Create(ctx context.Context, tenant *model.Tenant) error { return nil }
+func (r *fakeTenantRepo) GetByID(ctx context.Context, id uint64) (*model.Tenant, error) {
+	return nil, nil
+}
+func (r *fakeTenantRepo) ListByUserID(ctx context.Context, userID uint64) ([]*model.Tenant, error) {
+	return r.tenantsByUser[userID], nil
+}
+func (r *fakeTenantRepo) ListAll(ctx context.Context) ([]*model.Tenant, error)   { return nil, nil }
+func (r *fakeTenantRepo) Update(ctx context.Context, tenant *model.Tenant) error { return nil }
+
+// fakeCreditsService 内存版积分服务，仅覆盖 ListUsers 用到的方法
+type fakeCreditsService struct {
+	creditsByTenant map[uint64]*dto.TenantCreditsDetail
+}
+
+func (s *fakeCreditsService) GetBalance(ctx context.Context, tenantID uint64) (*dto.CreditsResp, error) {
+	return nil, nil
+}
+func (s *fakeCreditsService) CheckAndDeduct(ctx context.Context, tenantID uint64, action, refType string, refID uint64, note string) error {
+	return nil
+}
+func (s *fakeCreditsService) Gift(ctx context.Context, tenantID uint64, delta int64, action, note string) error {
+	return nil
+}
+func (s *fakeCreditsService) ExpireDueCredits(ctx context.Context) (int64, error) { return 0, nil }
+func (s *fakeCreditsService) SetUnlimited(ctx context.Context, tenantID uint64, unlimited bool) error {
+	return nil
+}
+func (s *fakeCreditsService) GetLogs(ctx context.Context, tenantID uint64, page, size int, amountType string) (*dto.CreditLogsPageResp, error) {
+	return nil, nil
+}
+func (s *fakeCreditsService) GetTenantCredits(ctx context.Context, tenantID uint64) (*dto.TenantCreditsDetail, error) {
+	return nil, nil
+}
+func (s *fakeCreditsService) ListTenantCredits(ctx context.Context, tenantIDs []uint64) ([]*dto.TenantCreditsDetail, error) {
+	result := make([]*dto.TenantCreditsDetail, 0, len(tenantIDs))
+	for _, id := range tenantIDs {
+		if c, ok := s.creditsByTenant[id]; ok {
+			result = append(result, c)
+		}
+	}
+	return result, nil
+}
+
 func TestListUsers_活跃时间字段(t *testing.T) {
 	loginAt := time.Date(2026, 7, 1, 10, 30, 0, 0, time.Local)
 	txAt := time.Date(2026, 7, 3, 18, 5, 0, 0, time.Local)
@@ -55,7 +104,15 @@ func TestListUsers_活跃时间字段(t *testing.T) {
 		},
 		lastTxTimes: map[uint64]time.Time{1: txAt},
 	}
-	svc := service.NewPlatformAdminService(nil, statsRepo, nil, nil, nil, nil, nil)
+	tenantRepo := &fakeTenantRepo{tenantsByUser: map[uint64][]*model.Tenant{
+		1: {{ID: 10, Name: "活跃账本"}},
+		2: {{ID: 20, Name: "沉默账本"}},
+	}}
+	creditsSvc := &fakeCreditsService{creditsByTenant: map[uint64]*dto.TenantCreditsDetail{
+		10: {TenantID: 10, Balance: 500},
+		20: {TenantID: 20, Balance: 0, Unlimited: true},
+	}}
+	svc := service.NewPlatformAdminService(nil, statsRepo, nil, nil, tenantRepo, creditsSvc, nil)
 
 	resp, err := svc.ListUsers(context.Background(), dto.PlatformUserFilter{Page: 1, PageSize: 20})
 	if err != nil {
@@ -72,6 +129,12 @@ func TestListUsers_活跃时间字段(t *testing.T) {
 	if active.LastTransactionAt != "2026-07-03 18:05:00" {
 		t.Errorf("活跃用户最近记账时间错误: %q", active.LastTransactionAt)
 	}
+	if active.CreditBalance != 500 {
+		t.Errorf("活跃用户剩余积分错误: %d", active.CreditBalance)
+	}
+	if active.CreditUnlimited {
+		t.Errorf("活跃用户不应为无限积分白名单")
+	}
 
 	silent := resp.Items[1]
 	if silent.LastLoginAt != "" {
@@ -79,5 +142,8 @@ func TestListUsers_活跃时间字段(t *testing.T) {
 	}
 	if silent.LastTransactionAt != "" {
 		t.Errorf("从未记账用户应返回空串，实际: %q", silent.LastTransactionAt)
+	}
+	if !silent.CreditUnlimited {
+		t.Errorf("沉默用户应为无限积分白名单")
 	}
 }

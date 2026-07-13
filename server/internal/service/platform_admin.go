@@ -38,13 +38,13 @@ type PlatformAdminService interface {
 }
 
 type platformAdminService struct {
-	adminRepo   repo.PlatformAdminRepo
-	statsRepo   repo.PlatformStatsRepo
-	userRepo    repo.UserRepo
-	configRepo  repo.PlatformConfigRepo
-	tenantRepo  repo.TenantRepo
-	creditsSvc  CreditsService
-	cfg         *config.Config
+	adminRepo  repo.PlatformAdminRepo
+	statsRepo  repo.PlatformStatsRepo
+	userRepo   repo.UserRepo
+	configRepo repo.PlatformConfigRepo
+	tenantRepo repo.TenantRepo
+	creditsSvc CreditsService
+	cfg        *config.Config
 }
 
 func NewPlatformAdminService(
@@ -146,6 +146,7 @@ func (s *platformAdminService) ListUsers(ctx context.Context, filter dto.Platfor
 		if t, ok := lastTxTimes[u.ID]; ok {
 			item.LastTransactionAt = t.Format("2006-01-02 15:04:05")
 		}
+		item.CreditBalance, item.CreditUnlimited, _ = s.sumUserCredits(ctx, u.ID)
 		items = append(items, item)
 	}
 	return &dto.PlatformUserListResp{
@@ -154,6 +155,31 @@ func (s *platformAdminService) ListUsers(ctx context.Context, filter dto.Platfor
 		Size:  filter.PageSize,
 		Items: items,
 	}, nil
+}
+
+// sumUserCredits 汇总某用户名下所有账本的剩余积分；只要有一个账本被设为无限积分白名单即视为无限
+func (s *platformAdminService) sumUserCredits(ctx context.Context, userID uint64) (int64, bool, error) {
+	tenants, err := s.tenantRepo.ListByUserID(ctx, userID)
+	if err != nil {
+		return 0, false, err
+	}
+	tenantIDs := make([]uint64, 0, len(tenants))
+	for _, t := range tenants {
+		tenantIDs = append(tenantIDs, t.ID)
+	}
+	creditsList, err := s.creditsSvc.ListTenantCredits(ctx, tenantIDs)
+	if err != nil {
+		return 0, false, err
+	}
+	var balance int64
+	unlimited := false
+	for _, c := range creditsList {
+		balance += c.Balance
+		if c.Unlimited {
+			unlimited = true
+		}
+	}
+	return balance, unlimited, nil
 }
 
 func (s *platformAdminService) GetUserDetail(ctx context.Context, userID uint64) (*dto.PlatformUserDetailResp, error) {
