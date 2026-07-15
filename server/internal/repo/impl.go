@@ -403,11 +403,14 @@ func (r *transactionRepo) List(ctx context.Context, tenantID uint64, filter dto.
 	if filter.CategoryID > 0 {
 		query = query.Where("category_id = ?", filter.CategoryID)
 	}
+	// 日期范围与排序共用同一时间字段：SortBy 已在 Normalize() 中白名单收敛为
+	// "transaction_date" 或 "created_at"，此处直接复用，避免筛选字段与用户勾选的
+	// 时间类型（交易时间/创建时间）不一致造成困惑
 	if filter.StartDate != "" {
-		query = query.Where("DATE(transaction_date) >= ?", filter.StartDate)
+		query = query.Where("DATE("+filter.SortBy+") >= ?", filter.StartDate)
 	}
 	if filter.EndDate != "" {
-		query = query.Where("DATE(transaction_date) <= ?", filter.EndDate)
+		query = query.Where("DATE("+filter.SortBy+") <= ?", filter.EndDate)
 	}
 
 	var total int64

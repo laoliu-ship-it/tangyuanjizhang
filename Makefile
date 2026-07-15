@@ -7,7 +7,8 @@ FNOS_SRC    := $(CURDIR)/fnos
 APP_VERSION := $(shell grep '^version' fnos/manifest | awk '{print $$3}')
 FPK_NAME    := fandianjizhang.fpk
 
-.PHONY: all build deploy fnos-build fnos-deploy clean local qa prod
+.PHONY: all build deploy fnos-build fnos-deploy clean local qa prod \
+        page\:dev\:dev page\:dev\:qa page\:dev\:pro
 
 # ── 环境说明 ─────────────────────────────────────────────────
 #   开发环境：本地，make local 启动（已在跑则销毁重启），共用测试环境数据库
@@ -76,6 +77,32 @@ local:
 	@echo "==> 启动前端（日志 logs/web.log）"
 	cd web && nohup npm run dev -- --port 5274 > ../logs/web.log 2>&1 &
 	@echo "==> 开发环境已启动：后端 http://localhost:8080  前端 http://localhost:5274"
+
+# ── 本地页面 + 指定环境接口（开发调试用）──────────────────────
+#   make page:dev:dev  本地页面 + 本地接口（需后端已启动，可先 make local）
+#   make page:dev:qa   本地页面 + 测试环境接口
+#   make page:dev:pro  本地页面 + 正式环境接口
+API_DEV := http://localhost:8080
+API_QA  := http://192.168.0.25:8090
+API_PRO := https://tangyuanjizhang.zaixianapp.cn
+
+define start_page
+	@echo "==> 销毁已有前端进程（:5274）"
+	-@lsof -ti:5274 | xargs kill -9 2>/dev/null || true
+	@mkdir -p logs
+	@echo "==> 启动前端（接口 $(1)，日志 logs/web.log）"
+	cd web && API_TARGET=$(1) nohup npm run dev -- --port 5274 > ../logs/web.log 2>&1 &
+	@echo "==> 已启动：页面 http://localhost:5274  →  接口 $(1)"
+endef
+
+page\:dev\:dev:
+	$(call start_page,$(API_DEV))
+
+page\:dev\:qa:
+	$(call start_page,$(API_QA))
+
+page\:dev\:pro:
+	$(call start_page,$(API_PRO))
 
 clean:
 	rm -f fnos/app/server

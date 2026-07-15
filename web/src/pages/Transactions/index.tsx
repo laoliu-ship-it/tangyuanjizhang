@@ -315,44 +315,88 @@ export default function Transactions() {
 
       {/* 筛选栏 */}
       <div className="bg-white rounded-2xl p-4 mb-5 shadow-sm border border-gray-100">
-        <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
-          <select
-            value={filterType}
-            onChange={e => setFilterType(e.target.value)}
-            className="px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
-          >
-            <option value="">全部类型</option>
-            <option value="income">收入</option>
-            <option value="expense">支出</option>
-          </select>
-
-          <select
-            value={filterCategoryId}
-            onChange={e => setFilterCategoryId(e.target.value ? Number(e.target.value) : '')}
-            className="px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
-          >
-            <option value="">全部分类</option>
-            {categories.map(c => (
-              <option key={c.id} value={c.id}>{c.icon} {c.name}</option>
-            ))}
-          </select>
-
-          <input
-            type="date"
-            value={filterStartDate}
-            onChange={e => setFilterStartDate(e.target.value)}
-            className="px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
-            placeholder="开始日期"
-          />
-
-          <input
-            type="date"
-            value={filterEndDate}
-            onChange={e => setFilterEndDate(e.target.value)}
-            className="px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
-            placeholder="结束日期"
-          />
+        <div className="flex items-center gap-2 mb-3">
+          <span className="text-xs text-gray-500">时间类型（日期筛选与列表排序）</span>
+          <div className="flex items-center gap-1 bg-gray-100 rounded-lg p-1">
+            <button
+              onClick={() => { setSortBy('transaction_date'); setPage(1) }}
+              className={`px-3 py-1.5 text-xs font-medium rounded-md transition-colors ${
+                sortBy === 'transaction_date'
+                  ? 'bg-white text-blue-600 shadow-sm'
+                  : 'text-gray-500 hover:text-gray-700'
+              }`}
+            >
+              交易时间
+            </button>
+            <button
+              onClick={() => { setSortBy('created_at'); setPage(1) }}
+              className={`px-3 py-1.5 text-xs font-medium rounded-md transition-colors ${
+                sortBy === 'created_at'
+                  ? 'bg-white text-blue-600 shadow-sm'
+                  : 'text-gray-500 hover:text-gray-700'
+              }`}
+            >
+              创建时间
+            </button>
+          </div>
         </div>
+        <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+          <div>
+            <label className="block text-xs text-gray-400 mb-1">类型</label>
+            <select
+              value={filterType}
+              onChange={e => setFilterType(e.target.value)}
+              className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+            >
+              <option value="">全部类型</option>
+              <option value="income">收入</option>
+              <option value="expense">支出</option>
+            </select>
+          </div>
+
+          <div>
+            <label className="block text-xs text-gray-400 mb-1">分类</label>
+            <select
+              value={filterCategoryId}
+              onChange={e => setFilterCategoryId(e.target.value ? Number(e.target.value) : '')}
+              className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+            >
+              <option value="">全部分类</option>
+              {categories.map(c => (
+                <option key={c.id} value={c.id}>{c.icon} {c.name}</option>
+              ))}
+            </select>
+          </div>
+
+          <div>
+            <label className="block text-xs text-gray-400 mb-1">
+              {sortBy === 'created_at' ? '创建时间（起）' : '交易日期（起）'}
+            </label>
+            <input
+              type="date"
+              value={filterStartDate}
+              onChange={e => setFilterStartDate(e.target.value)}
+              max={filterEndDate || undefined}
+              className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+            />
+          </div>
+
+          <div>
+            <label className="block text-xs text-gray-400 mb-1">
+              {sortBy === 'created_at' ? '创建时间（止）' : '交易日期（止）'}
+            </label>
+            <input
+              type="date"
+              value={filterEndDate}
+              onChange={e => setFilterEndDate(e.target.value)}
+              min={filterStartDate || undefined}
+              className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+            />
+          </div>
+        </div>
+        <p className="text-xs text-gray-400 mt-2">
+          日期筛选按「{sortBy === 'created_at' ? '创建时间' : '交易日期'}」，切换上方时间类型后筛选范围会同步生效，需重新点击查询
+        </p>
         <div className="flex items-center justify-between mt-3">
           <div className="flex gap-3">
             <button
@@ -366,28 +410,6 @@ export default function Transactions() {
               className="px-5 py-2 bg-gray-100 hover:bg-gray-200 text-gray-600 text-sm font-medium rounded-lg transition-colors"
             >
               重置
-            </button>
-          </div>
-          <div className="flex items-center gap-1 bg-gray-100 rounded-lg p-1">
-            <button
-              onClick={() => { setSortBy('transaction_date'); setPage(1) }}
-              className={`px-3 py-1.5 text-xs font-medium rounded-md transition-colors ${
-                sortBy === 'transaction_date'
-                  ? 'bg-white text-blue-600 shadow-sm'
-                  : 'text-gray-500 hover:text-gray-700'
-              }`}
-            >
-              按交易时间
-            </button>
-            <button
-              onClick={() => { setSortBy('created_at'); setPage(1) }}
-              className={`px-3 py-1.5 text-xs font-medium rounded-md transition-colors ${
-                sortBy === 'created_at'
-                  ? 'bg-white text-blue-600 shadow-sm'
-                  : 'text-gray-500 hover:text-gray-700'
-              }`}
-            >
-              按创建时间
             </button>
           </div>
         </div>

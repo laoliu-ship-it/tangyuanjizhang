@@ -4,13 +4,26 @@ import { authApi, tenantApi } from '../../services/api'
 import { useAuthStore } from '../../store/auth'
 import { useTenantStore } from '../../store/tenant'
 
+const REMEMBER_KEY = 'login_remember_credentials'
+
+function loadRememberedCredentials(): { email: string; password: string } | null {
+  try {
+    const raw = localStorage.getItem(REMEMBER_KEY)
+    return raw ? JSON.parse(raw) : null
+  } catch {
+    return null
+  }
+}
+
 export default function Login() {
   const navigate = useNavigate()
   const { setAuth } = useAuthStore()
   const { setTenants } = useTenantStore()
 
-  const [email, setEmail] = useState('')
-  const [password, setPassword] = useState('')
+  const remembered = loadRememberedCredentials()
+  const [email, setEmail] = useState(remembered?.email ?? '')
+  const [password, setPassword] = useState(remembered?.password ?? '')
+  const [rememberPassword, setRememberPassword] = useState(!!remembered)
   const [loading, setLoading] = useState(false)
 
   async function handleSubmit(e: React.FormEvent) {
@@ -20,6 +33,11 @@ export default function Login() {
       const res = await authApi.login({ email, password })
       const { token, user_id, username, tenants } = res.data.data
       setAuth(token, user_id, username)
+      if (rememberPassword) {
+        localStorage.setItem(REMEMBER_KEY, JSON.stringify({ email, password }))
+      } else {
+        localStorage.removeItem(REMEMBER_KEY)
+      }
       // 登录成功后重新拉取租户列表，确保包含刚被邀请加入的账本
       try {
         const tenantsRes = await tenantApi.list()
@@ -70,6 +88,16 @@ export default function Login() {
               className="w-full px-4 py-3 border border-gray-300 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500 text-sm"
             />
           </div>
+
+          <label className="flex items-center gap-2 text-sm text-gray-600 cursor-pointer select-none">
+            <input
+              type="checkbox"
+              checked={rememberPassword}
+              onChange={e => setRememberPassword(e.target.checked)}
+              className="rounded border-gray-300 text-blue-600 focus:ring-blue-500"
+            />
+            记住密码
+          </label>
 
           <button
             type="submit"
