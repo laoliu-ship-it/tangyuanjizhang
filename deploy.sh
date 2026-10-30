@@ -40,10 +40,19 @@ echo "=== 5. 远程配置 ==="
 ssh -p $SSH_PORT $REMOTE bash << 'REMOTE_SCRIPT'
 set -e
 
-# 确保 .env 存在（含 JWT_SECRET）
+# 确保 .env 存在（全新机器时补全全部默认配置，均不再写入 unit 文件）
 if [ ! -f ~/fandianjizhang/.env ]; then
-  echo "JWT_SECRET=$(openssl rand -hex 32)" > ~/fandianjizhang/.env
-  echo "[!] 创建了新的 .env（JWT_SECRET 已生成，用户需重新登录）"
+  cat > ~/fandianjizhang/.env << 'ENV_EOF'
+JWT_SECRET=__JWT_SECRET_PLACEHOLDER__
+DB_DSN=root:allgood@tcp(127.0.0.1:3306)/fandian?charset=utf8mb4&parseTime=True&loc=Asia%2FShanghai
+OCR_ENGINE=rapidocr
+OCR_RAPIDOCR_URL=http://127.0.0.1:8001/ocr
+OCR_AI_MODE=false
+UPLOAD_PATH=/home/nana/fandianjizhang/app/uploads
+SERVER_PORT=8090
+ENV_EOF
+  sed -i "s/__JWT_SECRET_PLACEHOLDER__/$(openssl rand -hex 32)/" ~/fandianjizhang/.env
+  echo "[!] 创建了新的 .env（含默认 DB_DSN/OCR/UPLOAD_PATH/SERVER_PORT，JWT_SECRET 已生成，用户需重新登录）"
 fi
 
 # 切换 OCR：停旧的 prod compose，启动纯 OCR compose

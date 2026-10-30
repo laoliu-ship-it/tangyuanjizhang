@@ -1,7 +1,7 @@
 import { useState, useEffect, useCallback, useRef } from 'react'
 import axios from 'axios'
 import dayjs from 'dayjs'
-import { transactionApi, categoryApi, importApi, tenantApi, type Transaction, type Category } from '../../services/api'
+import { transactionApi, categoryApi, merchantApi, importApi, tenantApi, type Transaction, type Category, type Merchant } from '../../services/api'
 import { useResponsive } from '../../hooks/useResponsive'
 import { useTenantStore } from '../../store/tenant'
 import { useAuthStore } from '../../store/auth'
@@ -24,11 +24,15 @@ export default function Transactions() {
 
   const [filterType, setFilterType] = useState('')
   const [filterCategoryId, setFilterCategoryId] = useState<number | ''>('')
+  const [filterMerchantId, setFilterMerchantId] = useState<number | ''>('')
+  const [merchantSearch, setMerchantSearch] = useState('')
+  const [merchantDropdownOpen, setMerchantDropdownOpen] = useState(false)
   const [filterStartDate, setFilterStartDate] = useState('')
   const [filterEndDate, setFilterEndDate] = useState('')
   const [sortBy, setSortBy] = useState<'transaction_date' | 'created_at'>('transaction_date')
 
   const [categories, setCategories] = useState<Category[]>([])
+  const [merchants, setMerchants] = useState<Merchant[]>([])
   const [currentRole, setCurrentRole] = useState<string>('member')
   const [formOpen, setFormOpen] = useState(false)
   const [editTarget, setEditTarget] = useState<Transaction | undefined>()
@@ -48,6 +52,7 @@ export default function Transactions() {
 
   useEffect(() => {
     categoryApi.list().then(res => setCategories(res.data.data)).catch(() => {})
+    merchantApi.list().then(res => setMerchants(res.data.data ?? [])).catch(() => {})
   }, [])
 
   useEffect(() => {
@@ -68,6 +73,7 @@ export default function Transactions() {
         page_size: pageSize,
         type: filterType || undefined,
         category_id: filterCategoryId || undefined,
+        merchant_id: filterMerchantId || undefined,
         start_date: filterStartDate || undefined,
         end_date: filterEndDate || undefined,
         sort_by: sortBy,
@@ -79,7 +85,7 @@ export default function Transactions() {
     } finally {
       setLoading(false)
     }
-  }, [page, pageSize, filterType, filterCategoryId, filterStartDate, filterEndDate, sortBy])
+  }, [page, pageSize, filterType, filterCategoryId, filterMerchantId, filterStartDate, filterEndDate, sortBy])
 
   useEffect(() => {
     loadTransactions(page)
@@ -99,9 +105,22 @@ export default function Transactions() {
   function handleReset() {
     setFilterType('')
     setFilterCategoryId('')
+    setFilterMerchantId('')
+    setMerchantSearch('')
     setFilterStartDate('')
     setFilterEndDate('')
     setPage(1)
+  }
+
+  function handleSelectMerchant(m: Merchant) {
+    setFilterMerchantId(m.id)
+    setMerchantSearch(m.name)
+    setMerchantDropdownOpen(false)
+  }
+
+  function handleClearMerchant() {
+    setFilterMerchantId('')
+    setMerchantSearch('')
   }
 
   async function handleDelete(id: number) {
@@ -340,7 +359,7 @@ export default function Transactions() {
             </button>
           </div>
         </div>
-        <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+        <div className="grid grid-cols-2 md:grid-cols-5 gap-3">
           <div>
             <label className="block text-xs text-gray-400 mb-1">类型</label>
             <select
@@ -366,6 +385,54 @@ export default function Transactions() {
                 <option key={c.id} value={c.id}>{c.icon} {c.name}</option>
               ))}
             </select>
+          </div>
+
+          <div className="relative">
+            <label className="block text-xs text-gray-400 mb-1">商户</label>
+            <div className="relative">
+              <input
+                type="text"
+                value={merchantSearch}
+                onChange={e => {
+                  setMerchantSearch(e.target.value)
+                  setFilterMerchantId('')
+                  setMerchantDropdownOpen(true)
+                }}
+                onFocus={() => setMerchantDropdownOpen(true)}
+                onBlur={() => setTimeout(() => setMerchantDropdownOpen(false), 150)}
+                placeholder="搜索商户"
+                className="w-full px-3 py-2 pr-7 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+              />
+              {merchantSearch && (
+                <button
+                  type="button"
+                  onClick={handleClearMerchant}
+                  className="absolute right-2 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-600"
+                >
+                  ×
+                </button>
+              )}
+            </div>
+            {merchantDropdownOpen && (
+              <div className="absolute z-10 left-0 right-0 top-full bg-white border border-gray-200 rounded-lg shadow-lg max-h-48 overflow-y-auto mt-0.5">
+                {merchants
+                  .filter(m => m.name.toLowerCase().includes(merchantSearch.toLowerCase()))
+                  .slice(0, 20)
+                  .map(m => (
+                    <button
+                      key={m.id}
+                      type="button"
+                      onClick={() => handleSelectMerchant(m)}
+                      className="w-full text-left px-3 py-2 text-sm hover:bg-blue-50 hover:text-blue-600 transition-colors"
+                    >
+                      {m.name}
+                    </button>
+                  ))}
+                {merchants.filter(m => m.name.toLowerCase().includes(merchantSearch.toLowerCase())).length === 0 && (
+                  <div className="px-3 py-2 text-sm text-gray-400">无匹配商户</div>
+                )}
+              </div>
+            )}
           </div>
 
           <div>

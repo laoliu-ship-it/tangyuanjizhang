@@ -115,7 +115,7 @@ type OcrRecord struct {
 	Amount       float64   `gorm:"type:decimal(12,2);default:0" json:"amount"`
 	Date         string    `gorm:"size:50;default:''" json:"date"`
 	MerchantName string    `gorm:"size:200;default:''" json:"merchant_name"`
-	RawTexts     string    `gorm:"type:text;default:''" json:"raw_texts"` // JSON []string
+	RawTexts     string    `gorm:"type:text" json:"raw_texts"` // JSON []string，MySQL 5.7 下 TEXT 列不支持 default，故不加
 	CreatedAt    time.Time `json:"created_at"`
 }
 

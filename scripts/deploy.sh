@@ -129,7 +129,7 @@ OCR_RAPIDOCR_URL=$OCR_SERVICE_URL/ocr
 OCR_AI_MODE=false
 OCR_LLM_CACHE_TTL=3600
 UPLOAD_PATH=$REMOTE_DIR/uploads
-SERVER_PORT=8080
+SERVER_PORT=7072
 EOF
     
     rsync -az -e ssh "$PROJECT_DIR/dist/.env" "$REMOTE_HOST:$REMOTE_DIR/.env"
@@ -211,7 +211,7 @@ if ! grep -q "tangyuanjizhang.zaixianapp.cn" "$CADDYFILE" 2>/dev/null; then
     cat >> "$CADDYFILE" << 'EOF'
 
 tangyuanjizhang.zaixianapp.cn {
-    reverse_proxy localhost:8080
+    reverse_proxy localhost:7072
 }
 EOF
     

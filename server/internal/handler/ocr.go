@@ -1,6 +1,7 @@
 package handler
 
 import (
+	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
@@ -85,57 +86,69 @@ func (h *OCRHandler) Upload(c *gin.Context) {
 		return
 	}
 
+	// savedPath 指向本次要识别的图片：新文件用刚存盘的副本；
+	// 命中去重但缺少 ocr_record 时复用上次存盘的文件，补跑 OCR
+	var (
+		savedPath string
+		fileName  = header.Filename
+		imageSize = header.Size
+	)
+	if imageSize == 0 {
+		imageSize = -1
+	}
+
 	// 去重检查：hash 命中 media_file，说明已上传过，不重复扣 upload+ocr
-	{
-		existing, err := h.mediaRepo.GetByHash(c.Request.Context(), tenantID, originalHash)
-		if err != nil {
-			log.Printf("[OCR] tenant=%d media lookup error: %v", tenantID, err)
-		}
-		if existing != nil {
+	if existing, err := h.mediaRepo.GetByHash(c.Request.Context(), tenantID, originalHash); err != nil {
+		log.Printf("[OCR] tenant=%d media lookup error: %v", tenantID, err)
+	} else if existing != nil {
+		if ocrRec, ocrErr := h.ocrRecordRepo.GetByHash(c.Request.Context(), tenantID, originalHash); ocrErr != nil {
+			log.Printf("[OCR] tenant=%d ocr record lookup error: %v", tenantID, ocrErr)
+		} else if ocrRec != nil {
+			// 已有 OCR 结果：直接复用，不重复扣 upload+ocr
 			log.Printf("[OCR] tenant=%d duplicate file detected, hash=%s, file=%s", tenantID, originalHash, existing.FileName)
-			// 复用已有的 ocr_record.id，让前端可以继续调 LLM（只扣 LLM 费，不重复扣 upload+ocr）
-			var existingOcrID uint64
 			var existingRawTexts []string
-			if ocrRec, ocrErr := h.ocrRecordRepo.GetByHash(c.Request.Context(), tenantID, originalHash); ocrErr == nil && ocrRec != nil {
-				existingOcrID = ocrRec.ID
-				_ = json.Unmarshal([]byte(ocrRec.RawTexts), &existingRawTexts)
-			}
+			_ = json.Unmarshal([]byte(ocrRec.RawTexts), &existingRawTexts)
 			c.JSON(http.StatusOK, dto.OK(dto.OCRResponse{
-				OcrID:        existingOcrID,
+				OcrID:        ocrRec.ID,
 				ImagePath:    "/" + existing.FilePath,
-				AIMode:       false,
-				Amount:       0,
-				Date:         "",
+				AIMode:       ocrRec.AIMode,
+				Amount:       ocrRec.Amount,
+				Date:         ocrRec.Date,
 				MerchantID:   0,
-				MerchantName: "",
+				MerchantName: ocrRec.MerchantName,
 				RawTexts:     existingRawTexts,
 				Duplicate:    true,
 				FileName:     existing.FileName,
 			}))
 			return
 		}
-	}
 
-	date := time.Now().Format("2006-01-02")
-	filename := fmt.Sprintf("%d_ocr%s", time.Now().UnixNano(), ext)
-	savedPath, err := h.storage.Save(tenantID, date, filename, file)
-	if err != nil {
-		c.JSON(http.StatusInternalServerError, dto.Fail(500, "保存图片失败: "+err.Error()))
-		return
-	}
-
-	// 记录媒体文件
-	{
-		fileSize := header.Size
-		if fileSize == 0 {
-			fileSize = -1
+		// 命中 media_file 但没有 ocr_record：说明上次 OCR 没跑完（前端超时中断、OCR 服务报错等）。
+		// 这里必须补跑 OCR，否则前端会拿到一个 ocr_id=0、raw_texts 为空的「成功」响应。
+		log.Printf("[OCR] tenant=%d media hit without ocr_record, re-running OCR, hash=%s, file=%s", tenantID, originalHash, existing.FileName)
+		savedPath = existing.FilePath
+		fileName = existing.FileName
+		if existing.FileSize > 0 {
+			imageSize = existing.FileSize
 		}
+	}
+
+	if savedPath == "" {
+		date := time.Now().Format("2006-01-02")
+		filename := fmt.Sprintf("%d_ocr%s", time.Now().UnixNano(), ext)
+		savedPath, err = h.storage.Save(tenantID, date, filename, file)
+		if err != nil {
+			c.JSON(http.StatusInternalServerError, dto.Fail(500, "保存图片失败: "+err.Error()))
+			return
+		}
+
+		// 先记录媒体文件，作为并发同图上传的去重锁
 		mf := &model.MediaFile{
 			TenantID:     tenantID,
 			OriginalHash: originalHash,
 			FileName:     header.Filename,
 			FilePath:     savedPath,
-			FileSize:     fileSize,
+			FileSize:     imageSize,
 			MimeType:     header.Header.Get("Content-Type"),
 		}
 		if err := h.mediaRepo.Create(c.Request.Context(), mf); err != nil {
@@ -167,7 +180,7 @@ func (h *OCRHandler) Upload(c *gin.Context) {
 		TenantID:     tenantID,
 		ImagePath:    savedPath,
 		ImageHash:    originalHash,
-		ImageSize:    header.Size,
+		ImageSize:    imageSize,
 		AIMode:       result.AIMode,
 		Amount:       result.Amount,
 		Date:         result.Date,
@@ -178,7 +191,7 @@ func (h *OCRHandler) Upload(c *gin.Context) {
 		log.Printf("[OCR] tenant=%d failed to create ocr_record: %v", tenantID, err)
 	}
 
-	// 扣费：新文件 = upload + ocr（重复文件走 early return，不到这里）
+	// 扣费：走到这里说明本次确实跑了 OCR（首次上传，或上次中断后的补跑）
 	if deductErr := h.creditsSvc.CheckAndDeduct(c.Request.Context(), tenantID, "upload", "ocr_record", ocrRec.ID, "图片上传"); deductErr != nil {
 		log.Printf("[credits] tenant=%d upload deduct error: %v", tenantID, deductErr)
 		c.JSON(http.StatusOK, dto.Fail(402, "积分不足，请联系管理员充值"))
@@ -199,6 +212,7 @@ func (h *OCRHandler) Upload(c *gin.Context) {
 		MerchantID:   merchantID,
 		MerchantName: merchantName,
 		RawTexts:     rawTexts,
+		FileName:     fileName,
 	}))
 }
 
@@ -235,28 +249,33 @@ func (h *OCRHandler) Analyze(c *gin.Context) {
 		return
 	}
 
-	// 去重检查
-	{
-		existing, err := h.mediaRepo.GetByHash(c.Request.Context(), tenantID, originalHash)
-		if err != nil {
-			log.Printf("[OCR] tenant=%d media lookup error: %v", tenantID, err)
-		}
-		if existing != nil {
-			log.Printf("[OCR] tenant=%d duplicate file detected (analyze), hash=%s, file=%s", tenantID, originalHash, existing.FileName)
-			// 对已存在文件也做 LLM 分析
-			var categoryItems []dto.CategoryItem
-			if cats, cerr := h.categorySvc.List(c.Request.Context(), tenantID); cerr == nil {
-				categoryItems = make([]dto.CategoryItem, 0, len(cats))
-				for _, cat := range cats {
-					categoryItems = append(categoryItems, dto.CategoryItem{
-						ID:   cat.ID,
-						Name: cat.Name,
-						Type: cat.Type,
-					})
-				}
-			}
+	// savedPath 指向本次要识别的图片：新文件用刚存盘的副本；
+	// 命中去重但缺少 ocr_record 时复用上次存盘的文件，补跑 OCR
+	var (
+		savedPath string
+		fileName  = header.Filename
+		imageSize = header.Size
+	)
+	if imageSize == 0 {
+		imageSize = -1
+	}
 
-			rawTexts := []string{}
+	// 去重检查
+	if existing, err := h.mediaRepo.GetByHash(c.Request.Context(), tenantID, originalHash); err != nil {
+		log.Printf("[OCR] tenant=%d media lookup error: %v", tenantID, err)
+	} else if existing != nil {
+		if ocrRec, ocrErr := h.ocrRecordRepo.GetByHash(c.Request.Context(), tenantID, originalHash); ocrErr != nil {
+			log.Printf("[OCR] tenant=%d ocr record lookup error: %v", tenantID, ocrErr)
+		} else if ocrRec != nil {
+			log.Printf("[OCR] tenant=%d duplicate file detected (analyze), hash=%s, file=%s", tenantID, originalHash, existing.FileName)
+			// 对已存在文件也做 LLM 分析，用已有 OCR 文本，避免把空文本喂给 LLM
+			var rawTexts []string
+			_ = json.Unmarshal([]byte(ocrRec.RawTexts), &rawTexts)
+			if rawTexts == nil {
+				rawTexts = []string{}
+			}
+			categoryItems := h.loadCategoryItems(c.Request.Context(), tenantID)
+
 			var llmSuggestions []*dto.LLMSuggestion
 			var llmErrMsg string
 			suggestions, usage, lerr := h.llmSvc.Analyze(c.Request.Context(), tenantID, existing.FilePath, rawTexts, categoryItems)
@@ -276,11 +295,11 @@ func (h *OCRHandler) Analyze(c *gin.Context) {
 
 			c.JSON(http.StatusOK, dto.OK(dto.OCRAnalyzeResponse{
 				ImagePath:    "/" + existing.FilePath,
-				AIMode:       false,
-				Amount:       0,
-				Date:         "",
+				AIMode:       ocrRec.AIMode,
+				Amount:       ocrRec.Amount,
+				Date:         ocrRec.Date,
 				MerchantID:   0,
-				MerchantName: "",
+				MerchantName: ocrRec.MerchantName,
 				RawTexts:     rawTexts,
 				LLM:          llmSuggestions,
 				LLMError:     llmErrMsg,
@@ -289,27 +308,38 @@ func (h *OCRHandler) Analyze(c *gin.Context) {
 			}))
 			return
 		}
+
+		// 命中 media_file 但没有 ocr_record：上次 OCR 没跑完（前端超时中断、OCR 服务报错等），
+		// 这里补跑 OCR，避免返回空结果
+		log.Printf("[OCR] tenant=%d media hit without ocr_record (analyze), re-running OCR, hash=%s, file=%s", tenantID, originalHash, existing.FileName)
+		savedPath = existing.FilePath
+		fileName = existing.FileName
+		if existing.FileSize > 0 {
+			imageSize = existing.FileSize
+		}
 	}
 
-	date := time.Now().Format("2006-01-02")
-	filename := fmt.Sprintf("%d_analyze%s", time.Now().UnixNano(), ext)
-	savedPath, err := h.storage.Save(tenantID, date, filename, file)
-	if err != nil {
-		c.JSON(http.StatusInternalServerError, dto.Fail(500, "保存图片失败: "+err.Error()))
-		return
-	}
+	if savedPath == "" {
+		date := time.Now().Format("2006-01-02")
+		filename := fmt.Sprintf("%d_analyze%s", time.Now().UnixNano(), ext)
+		savedPath, err = h.storage.Save(tenantID, date, filename, file)
+		if err != nil {
+			c.JSON(http.StatusInternalServerError, dto.Fail(500, "保存图片失败: "+err.Error()))
+			return
+		}
 
-	// 记录媒体文件
-	mf := &model.MediaFile{
-		TenantID:     tenantID,
-		OriginalHash: originalHash,
-		FileName:     header.Filename,
-		FilePath:     savedPath,
-		FileSize:     header.Size,
-		MimeType:     header.Header.Get("Content-Type"),
-	}
-	if err := h.mediaRepo.Create(c.Request.Context(), mf); err != nil {
-		log.Printf("[OCR] tenant=%d failed to create media record: %v", tenantID, err)
+		// 先记录媒体文件，作为并发同图上传的去重锁
+		mf := &model.MediaFile{
+			TenantID:     tenantID,
+			OriginalHash: originalHash,
+			FileName:     header.Filename,
+			FilePath:     savedPath,
+			FileSize:     imageSize,
+			MimeType:     header.Header.Get("Content-Type"),
+		}
+		if err := h.mediaRepo.Create(c.Request.Context(), mf); err != nil {
+			log.Printf("[OCR] tenant=%d failed to create media record: %v", tenantID, err)
+		}
 	}
 
 	// === OCR 识别 ===
@@ -334,20 +364,7 @@ func (h *OCRHandler) Analyze(c *gin.Context) {
 	}
 
 	// 查询租户分类列表传给 LLM，让其直接匹配 category_id
-	var categoryItems []dto.CategoryItem
-	if cats, cerr := h.categorySvc.List(c.Request.Context(), tenantID); cerr == nil {
-		categoryItems = make([]dto.CategoryItem, 0, len(cats))
-		for _, cat := range cats {
-			categoryItems = append(categoryItems, dto.CategoryItem{
-				ID:   cat.ID,
-				Name: cat.Name,
-				Type: cat.Type,
-			})
-		}
-		log.Printf("[LLM] tenant=%d passing %d categories to LLM", tenantID, len(categoryItems))
-	} else {
-		log.Printf("[LLM] tenant=%d failed to load categories: %v", tenantID, cerr)
-	}
+	categoryItems := h.loadCategoryItems(c.Request.Context(), tenantID)
 
 	rawTexts := extractRawTextStrings(ocrResult.RawTexts)
 
@@ -357,7 +374,7 @@ func (h *OCRHandler) Analyze(c *gin.Context) {
 		TenantID:     tenantID,
 		ImagePath:    savedPath,
 		ImageHash:    originalHash,
-		ImageSize:    header.Size,
+		ImageSize:    imageSize,
 		AIMode:       ocrResult.AIMode,
 		Amount:       ocrResult.Amount,
 		Date:         ocrResult.Date,
@@ -368,7 +385,7 @@ func (h *OCRHandler) Analyze(c *gin.Context) {
 		log.Printf("[OCR] tenant=%d failed to create ocr_record: %v", tenantID, err)
 	}
 
-	// 新文件：OCR 成功后扣 upload + ocr（失败已在上方 return，不会到这里）
+	// 本次确实跑了 OCR（首次上传，或上次中断后的补跑）：OCR 成功后扣 upload + ocr
 	if deductErr := h.creditsSvc.CheckAndDeduct(c.Request.Context(), tenantID, "upload", "ocr_record", ocrRec.ID, "图片上传"); deductErr != nil {
 		log.Printf("[credits] tenant=%d upload deduct error: %v", tenantID, deductErr)
 		c.JSON(http.StatusOK, dto.Fail(402, "积分不足，请联系管理员充值"))
@@ -415,7 +432,27 @@ func (h *OCRHandler) Analyze(c *gin.Context) {
 		RawTexts:     rawTexts,
 		LLM:          llmSuggestions,
 		LLMError:     llmErrMsg,
+		FileName:     fileName,
 	}))
+}
+
+// loadCategoryItems 加载租户分类列表，供 LLM 直接匹配 category_id
+func (h *OCRHandler) loadCategoryItems(ctx context.Context, tenantID uint64) []dto.CategoryItem {
+	cats, err := h.categorySvc.List(ctx, tenantID)
+	if err != nil {
+		log.Printf("[LLM] tenant=%d failed to load categories: %v", tenantID, err)
+		return nil
+	}
+	items := make([]dto.CategoryItem, 0, len(cats))
+	for _, cat := range cats {
+		items = append(items, dto.CategoryItem{
+			ID:   cat.ID,
+			Name: cat.Name,
+			Type: cat.Type,
+		})
+	}
+	log.Printf("[LLM] tenant=%d passing %d categories to LLM", tenantID, len(items))
+	return items
 }
 
 func extractRawTextStrings(texts []dto.OCRText) []string {

@@ -14,7 +14,7 @@ echo "📸 测试图片: $IMAGE_PATH"
 echo "🚀 正在上传并识别..."
 
 # 替换成你的服务器地址
-API_URL="http://localhost:8080/api/upload/ocr/analyze"
+API_URL="http://localhost:7072/api/upload/ocr/analyze"
 
 # 上传图片并获取结果
 RESPONSE=$(curl -s -X POST "$API_URL" \

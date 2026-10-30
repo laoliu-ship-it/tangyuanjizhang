@@ -10,6 +10,7 @@ import Dashboard from './pages/Dashboard/index'
 import Transactions from './pages/Transactions/index'
 import UploadOCR from './pages/UploadOCR/index'
 import Statistics from './pages/Statistics/index'
+import MerchantTransactions from './pages/MerchantTransactions/index'
 import TenantSettings from './pages/TenantSettings/index'
 import Help from './pages/Help/index'
 import PlatformLogin from './platform/pages/Login'
@@ -105,6 +106,7 @@ export default function App() {
           <Route path="transactions" element={<Transactions />} />
           <Route path="upload" element={<UploadOCR />} />
           <Route path="statistics" element={<Statistics />} />
+          <Route path="statistics/merchants/:merchantId" element={<MerchantTransactions />} />
           <Route path="settings" element={<TenantSettings />} />
           <Route path="help" element={<Help />} />
         </Route>

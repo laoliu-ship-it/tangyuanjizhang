@@ -315,6 +315,7 @@ export const transactionApi = {
     page_size?: number
     type?: string
     category_id?: number
+    merchant_id?: number
     start_date?: string
     end_date?: string
     sort_by?: 'transaction_date' | 'created_at'

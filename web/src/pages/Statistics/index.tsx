@@ -1,10 +1,13 @@
 import { useState, useEffect, useCallback } from 'react'
+import { useNavigate } from 'react-router-dom'
 import dayjs from 'dayjs'
 import {
   BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer,
   PieChart, Pie, Cell, Tooltip as PieTooltip
 } from 'recharts'
 import { statisticsApi, type MonthlyStatistics, type YearlyStatistics, type RangeStatistics, type MerchantStat } from '../../services/api'
+import { useResponsive } from '../../hooks/useResponsive'
+import MerchantTransactionsList from '../../components/MerchantTransactionsList'
 
 const COLORS = [
   '#3b82f6', '#ef4444', '#22c55e', '#f59e0b', '#8b5cf6',
@@ -75,6 +78,8 @@ const VIEW_OPTIONS: { key: ViewMode; label: string }[] = [
 ]
 
 export default function Statistics() {
+  const navigate = useNavigate()
+  const { isMobile } = useResponsive()
   const [view, setView] = useState<ViewMode>('monthly')
 
   // 月视图状态
@@ -92,6 +97,7 @@ export default function Statistics() {
   const [loading, setLoading] = useState(true)
   const [merchants, setMerchants] = useState<MerchantStat[]>([])
   const [merchantRefreshing, setMerchantRefreshing] = useState(false)
+  const [selectedMerchant, setSelectedMerchant] = useState<MerchantStat | null>(null)
 
   const load = useCallback(async () => {
     setLoading(true)
@@ -133,6 +139,29 @@ export default function Statistics() {
   useEffect(() => {
     load()
   }, [load])
+
+  // 计算当前统计视图对应的日期范围，点击商户查看交易记录时按此范围二次筛选
+  function currentDateRange(): { start: string; end: string } {
+    if (view === 'monthly') {
+      const start = dayjs(`${year}-${month}-01`)
+      return { start: start.format('YYYY-MM-DD'), end: start.endOf('month').format('YYYY-MM-DD') }
+    }
+    if (view === 'yearly') {
+      return { start: `${yearOnly}-01-01`, end: `${yearOnly}-12-31` }
+    }
+    return { start: startDate, end: endDate }
+  }
+
+  function handleMerchantClick(m: MerchantStat) {
+    const { start, end } = currentDateRange()
+    if (isMobile) {
+      navigate(`/statistics/merchants/${m.merchant_id}`, {
+        state: { merchantName: m.merchant_name, startDate: start, endDate: end },
+      })
+    } else {
+      setSelectedMerchant(m)
+    }
+  }
 
   // 月视图导航
   function prevMonth() {
@@ -353,7 +382,11 @@ export default function Statistics() {
                   const maxTotal = merchants[0]?.total ?? 1
                   const pct = Math.round((m.total / maxTotal) * 100)
                   return (
-                    <div key={m.merchant_id} className="flex items-center gap-3">
+                    <button
+                      key={m.merchant_id}
+                      onClick={() => handleMerchantClick(m)}
+                      className="w-full flex items-center gap-3 -mx-1 px-1 py-1 rounded-lg hover:bg-gray-50 transition-colors text-left"
+                    >
                       <span className={`w-5 h-5 rounded-full flex items-center justify-center text-xs font-bold flex-shrink-0 ${
                         index === 0 ? 'bg-red-500 text-white' :
                         index === 1 ? 'bg-orange-400 text-white' :
@@ -378,7 +411,7 @@ export default function Statistics() {
                           />
                         </div>
                       </div>
-                    </div>
+                    </button>
                   )
                 })}
               </div>
@@ -474,6 +507,36 @@ export default function Statistics() {
             </div>
           </div>
         </>
+      )}
+
+      {/* 商户交易记录弹窗（PC 端） */}
+      {selectedMerchant && (
+        <div
+          className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-6"
+          onClick={() => setSelectedMerchant(null)}
+        >
+          <div
+            className="bg-white rounded-2xl shadow-2xl w-full max-w-lg max-h-[85vh] overflow-y-auto p-5"
+            onClick={e => e.stopPropagation()}
+          >
+            <div className="flex items-center justify-between mb-4">
+              <h3 className="text-base font-semibold text-gray-800 truncate">{selectedMerchant.merchant_name}</h3>
+              <button
+                onClick={() => setSelectedMerchant(null)}
+                className="w-8 h-8 flex items-center justify-center rounded-full hover:bg-gray-100 transition-colors flex-shrink-0"
+              >
+                <svg className="w-4 h-4 text-gray-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                </svg>
+              </button>
+            </div>
+            <MerchantTransactionsList
+              merchantId={selectedMerchant.merchant_id}
+              startDate={currentDateRange().start}
+              endDate={currentDateRange().end}
+            />
+          </div>
+        </div>
       )}
     </div>
   )

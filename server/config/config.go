@@ -77,7 +77,7 @@ func Load() *Config {
 			MaxSize: parseInt64(getEnv("UPLOAD_MAX_SIZE", "1048576")),
 		},
 		Server: ServerConfig{
-			Port: getEnv("SERVER_PORT", "8080"),
+			Port: getEnv("SERVER_PORT", "7072"),
 		},
 	}
 }

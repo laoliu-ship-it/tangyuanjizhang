@@ -147,6 +147,7 @@ type BatchDeleteTransactionReq struct {
 type TransactionFilter struct {
 	Type       string `form:"type"`
 	CategoryID uint64 `form:"category_id"`
+	MerchantID uint64 `form:"merchant_id"`
 	StartDate  string `form:"start_date"`
 	EndDate    string `form:"end_date"`
 	SortBy     string `form:"sort_by"` // "transaction_date" | "created_at"
