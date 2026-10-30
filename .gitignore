@@ -11,3 +11,4 @@ dist/server
 .idea/
 fnos/app/server
 logs/
+uniapp/node_modules

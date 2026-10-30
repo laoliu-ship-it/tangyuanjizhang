@@ -1,0 +1,1 @@
+import{d as a,c as s,w as t,i as e,o as l,a as o,b as n}from"./index-HppOb4Y4.js";const p=a({__name:"login",setup:a=>(a,p)=>{const r=e;return l(),s(r,{class:"page"},{default:t(()=>[o(r,{class:"title-page"},{default:t(()=>[n("登录")]),_:1}),o(r,{class:"text-3",style:{"margin-top":"12rpx"}},{default:t(()=>[n("页面待实现")]),_:1})]),_:1})}});export{p as default};

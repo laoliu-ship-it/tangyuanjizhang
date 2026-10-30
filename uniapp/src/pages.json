@@ -1,0 +1,90 @@
+{
+  "pages": [
+    {
+      "path": "pages/home/index",
+      "style": {
+        "navigationBarTitleText": "汤圆记账",
+        "navigationStyle": "custom",
+        "enablePullDownRefresh": false,
+        "backgroundColor": "#f9fafb"
+      }
+    },
+    {
+      "path": "pages/auth/login",
+      "style": {
+        "navigationBarTitleText": "登录",
+        "navigationStyle": "custom",
+        "backgroundColor": "#f9fafb"
+      }
+    },
+    {
+      "path": "pages/auth/register",
+      "style": {
+        "navigationBarTitleText": "注册",
+        "navigationStyle": "custom",
+        "backgroundColor": "#f9fafb"
+      }
+    },
+    {
+      "path": "pages/transactions/index",
+      "style": {
+        "navigationBarTitleText": "交易记录",
+        "navigationStyle": "custom",
+        "backgroundColor": "#f9fafb"
+      }
+    },
+    {
+      "path": "pages/statistics/index",
+      "style": {
+        "navigationBarTitleText": "统计分析",
+        "navigationStyle": "custom",
+        "backgroundColor": "#f9fafb"
+      }
+    },
+    {
+      "path": "pages/merchant/detail",
+      "style": {
+        "navigationBarTitleText": "商户明细",
+        "navigationStyle": "custom",
+        "backgroundColor": "#f9fafb"
+      }
+    },
+    {
+      "path": "pages/settings/index",
+      "style": {
+        "navigationBarTitleText": "账本设置",
+        "navigationStyle": "custom",
+        "backgroundColor": "#f9fafb"
+      }
+    },
+    {
+      "path": "pages/help/index",
+      "style": {
+        "navigationBarTitleText": "帮助中心",
+        "navigationStyle": "custom",
+        "backgroundColor": "#f9fafb"
+      }
+    },
+    {
+      "path": "pages/upload/index",
+      "style": {
+        "navigationBarTitleText": "拍照识别",
+        "navigationStyle": "custom",
+        "backgroundColor": "#f9fafb"
+      }
+    }
+  ],
+  "globalStyle": {
+    "navigationStyle": "custom",
+    "navigationBarTextStyle": "black",
+    "navigationBarTitleText": "汤圆记账",
+    "navigationBarBackgroundColor": "#ffffff",
+    "backgroundColor": "#f9fafb",
+    "backgroundColorTop": "#f9fafb",
+    "backgroundColorBottom": "#f9fafb",
+    "rpxCalcMaxDeviceWidth": 960,
+    "rpxCalcBaseDeviceWidth": 375,
+    "rpxCalcIncludeWidth": 750
+  },
+  "uniIdRouter": {}
+}

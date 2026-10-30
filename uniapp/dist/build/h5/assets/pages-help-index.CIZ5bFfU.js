@@ -1,0 +1,1 @@
+import{d as a,c as s,w as t,i as e,o as l,a as d,b as n}from"./index-HppOb4Y4.js";const o=a({__name:"index",setup:a=>(a,o)=>{const p=e;return l(),s(p,{class:"page"},{default:t(()=>[d(p,{class:"title-page"},{default:t(()=>[n("帮助")]),_:1}),d(p,{class:"text-3",style:{"margin-top":"12rpx"}},{default:t(()=>[n("页面待实现")]),_:1})]),_:1})}});export{o as default};

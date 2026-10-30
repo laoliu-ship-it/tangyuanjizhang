@@ -1,0 +1,1 @@
+import{d as a,c as s,w as t,i as e,o as l,a as d,b as o}from"./index-HppOb4Y4.js";const p=a({__name:"detail",setup:a=>(a,p)=>{const r=e;return l(),s(r,{class:"page"},{default:t(()=>[d(r,{class:"title-page"},{default:t(()=>[o("商户明细")]),_:1}),d(r,{class:"text-3",style:{"margin-top":"12rpx"}},{default:t(()=>[o("页面待实现")]),_:1})]),_:1})}});export{p as default};
