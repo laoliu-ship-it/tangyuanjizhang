@@ -56,6 +56,18 @@ func (s *llmService) InvalidatePlatformClients() {
 	s.mu.Unlock()
 }
 
+// redactConfigValue 返回可安全写入日志的配置值。
+// 密钥类配置（如 platform_llm_api_key）只暴露是否已配置，禁止把原值写进日志。
+func redactConfigValue(key, value string) string {
+	if key == model.ConfigKeyPlatformLLMAPIKey {
+		if strings.TrimSpace(value) == "" {
+			return "<empty>"
+		}
+		return "<redacted>"
+	}
+	return fmt.Sprintf("%q", value)
+}
+
 // loadPlatformLLMConfig 从 DB 读平台 LLM 配置，不存在则回退到静态配置
 func (s *llmService) loadPlatformLLMConfig(ctx context.Context) config.LLMConfig {
 	if s.platformCfgRepo == nil {
@@ -72,7 +84,7 @@ func (s *llmService) loadPlatformLLMConfig(ctx context.Context) config.LLMConfig
 			log.Printf("[LLM] loadPlatformLLMConfig: GetByKey(%s) = nil (key not found)", key)
 			return ""
 		}
-		log.Printf("[LLM] loadPlatformLLMConfig: GetByKey(%s) = %q", key, cfg.ConfigValue)
+		log.Printf("[LLM] loadPlatformLLMConfig: GetByKey(%s) = %s", key, redactConfigValue(key, cfg.ConfigValue))
 		return cfg.ConfigValue
 	}
 	enabled := get(model.ConfigKeyPlatformLLMEnabled) == "true"
