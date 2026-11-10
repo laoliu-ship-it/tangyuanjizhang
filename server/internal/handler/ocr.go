@@ -44,6 +44,11 @@ func NewOCRHandler(ocrSvc service.OCRService, merchantSvc service.MerchantServic
 // POST /api/upload/ocr
 func (h *OCRHandler) Upload(c *gin.Context) {
 	tenantID := middleware.GetTenantID(c)
+	// 演示身份：返回明确标注的示例结果，不访问真实 OCR/付费上游、不消耗正式积分。
+	if middleware.IsDemo(c) {
+		c.JSON(http.StatusOK, dto.OK(demoOCRResponse()))
+		return
+	}
 
 	file, header, err := c.Request.FormFile("file")
 	if err != nil {
@@ -220,6 +225,10 @@ func (h *OCRHandler) Upload(c *gin.Context) {
 // POST /api/upload/ocr/analyze
 func (h *OCRHandler) Analyze(c *gin.Context) {
 	tenantID := middleware.GetTenantID(c)
+	if middleware.IsDemo(c) {
+		c.JSON(http.StatusOK, dto.OK(demoAnalyzeResponse()))
+		return
+	}
 
 	file, header, err := c.Request.FormFile("file")
 	if err != nil {
@@ -385,7 +394,7 @@ func (h *OCRHandler) Analyze(c *gin.Context) {
 		log.Printf("[OCR] tenant=%d failed to create ocr_record: %v", tenantID, err)
 	}
 
-	// 本次确实跑了 OCR（首次上传，或上次中断后的补跑）：OCR 成功后扣 upload + ocr
+	// 扣费：走到这里说明本次确实跑了 OCR（首次上传，或上次中断后的补跑）
 	if deductErr := h.creditsSvc.CheckAndDeduct(c.Request.Context(), tenantID, "upload", "ocr_record", ocrRec.ID, "图片上传"); deductErr != nil {
 		log.Printf("[credits] tenant=%d upload deduct error: %v", tenantID, deductErr)
 		c.JSON(http.StatusOK, dto.Fail(402, "积分不足，请联系管理员充值"))

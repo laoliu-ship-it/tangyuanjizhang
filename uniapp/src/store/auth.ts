@@ -6,9 +6,10 @@ interface AuthSnapshot {
   token: string | null
   userId: number | null
   username: string | null
+  demo: boolean
 }
 
-const EMPTY: AuthSnapshot = { token: null, userId: null, username: null }
+const EMPTY: AuthSnapshot = { token: null, userId: null, username: null, demo: false }
 
 export const useAuthStore = defineStore('auth', {
   state: (): AuthSnapshot => ({ ...EMPTY }),
@@ -24,12 +25,14 @@ export const useAuthStore = defineStore('auth', {
       this.token = saved.token ?? null
       this.userId = saved.userId ?? null
       this.username = saved.username ?? null
+      this.demo = !!saved.demo
     },
 
-    setAuth(token: string, userId: number, username: string) {
+    setAuth(token: string, userId: number, username: string, demo = false) {
       this.token = token
       this.userId = userId
       this.username = username
+      this.demo = demo
       this.persist()
     },
 
@@ -44,6 +47,7 @@ export const useAuthStore = defineStore('auth', {
       this.token = null
       this.userId = null
       this.username = null
+      this.demo = false
       remove(STORAGE_KEYS.auth)
     },
 
@@ -54,6 +58,7 @@ export const useAuthStore = defineStore('auth', {
         token: this.token,
         userId: this.userId,
         username: this.username,
+        demo: this.demo,
       } satisfies AuthSnapshot)
     },
   },

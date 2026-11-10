@@ -18,8 +18,10 @@ import (
 	"fandianjizhang/server/internal/handler"
 	"fandianjizhang/server/internal/middleware"
 	"fandianjizhang/server/internal/model"
+	"fandianjizhang/server/internal/paymentadapter"
 	"fandianjizhang/server/internal/repo"
 	"fandianjizhang/server/internal/service"
+	"fandianjizhang/server/internal/xgjclient"
 	"fandianjizhang/server/pkg/excel"
 	pkgllm "fandianjizhang/server/pkg/llm"
 	pkgocr "fandianjizhang/server/pkg/ocr"
@@ -65,6 +67,12 @@ func main() {
 		&model.CreditLot{},
 		&model.CreditLogDetail{},
 		&model.LLMTokenUsage{},
+		&model.BillingPackage{},
+		&model.BillingPurchaseIntent{},
+		&model.BillingProcessedEvent{},
+		&model.BillingRefund{},
+		&model.BillingCapability{},
+		&model.DemoAccount{},
 	); err != nil {
 		log.Fatalf("数据库迁移失败: %v", err)
 	}
@@ -169,6 +177,8 @@ func main() {
 	statsCacheRepo := repo.NewStatsCacheRepo(db)
 	tenantCreditsRepo := repo.NewTenantCreditsRepo(db)
 	llmTokenUsageRepo := repo.NewLLMTokenUsageRepo(db)
+	billingRepo := repo.NewBillingRepo(db)
+	demoRepo := repo.NewDemoRepo(db)
 
 	// 初始化 OCR 引擎（带可配置缓存）
 	ocrEngine, err := pkgocr.NewEngine(cfg, platformConfigRepo)
@@ -185,6 +195,21 @@ func main() {
 	// 初始化积分 Service
 	creditsSvc := service.NewCreditsService(tenantCreditsRepo, platformConfigRepo)
 
+	// 初始化次数包/虚拟支付 Service（默认关闭；未配置时保持旧积分行为）
+	xgjClient := xgjclient.New(xgjclient.Config{
+		BaseURL: cfg.Billing.XGJBaseURL,
+		AppSlug: cfg.Billing.AppSlug,
+		Secret:  cfg.Billing.XGJSecret,
+		Timeout: 10 * time.Second,
+	})
+	paymentGateway := paymentadapter.NewXGJ(xgjClient)
+	billingSvc := service.NewBillingService(billingRepo, tenantCreditsRepo, platformConfigRepo, paymentGateway, cfg.Billing)
+	demoSvc := service.NewDemoService(demoRepo, userRepo, tenantRepo, tenantMemberRepo, categoryRepo, transactionRepo, cfg.Billing)
+	if demoSvc.Enabled() {
+		if _, err := demoSvc.Ensure(context.Background()); err != nil {
+			log.Printf("[demo] 初始化演示账号失败: %v", err)
+		}
+	}
 	// 定时任务统一管理器：所有周期性后台任务在此注册，禁止散落裸 goroutine
 	cronManager := cron.NewManager()
 	// 积分到期清理：启动时清一次，之后每小时兜底一次（扣费/发放时还有惰性清理）
@@ -199,9 +224,10 @@ func main() {
 			}
 			return nil
 		})
+	// 注意：购买积分的到期清理复用现有 credits_expire 定时任务，不新增独立 cron。
 
 	// 初始化 Service 层
-	authSvc := service.NewAuthService(userRepo, tenantRepo, tenantMemberRepo, categoryRepo, creditsSvc, platformConfigRepo, cfg)
+	authSvc := service.NewAuthService(userRepo, tenantRepo, tenantMemberRepo, categoryRepo, creditsSvc, platformConfigRepo, demoRepo, cfg)
 	tenantSvc := service.NewTenantService(tenantRepo, tenantMemberRepo, userRepo, categoryRepo, tenantSettingsRepo)
 	categorySvc := service.NewCategoryService(categoryRepo)
 	merchantSvc := service.NewMerchantService(merchantRepo)
@@ -222,6 +248,7 @@ func main() {
 	transactionHandler := handler.NewTransactionHandler(transactionSvc)
 	ocrHandler := handler.NewOCRHandler(ocrSvc, merchantSvc, categorySvc, llmSvcI, creditsSvc, store, mediaRepo, ocrRecordRepo, llmTokenUsageRepo, cfg.Upload)
 	llmHandler := handler.NewLLMHandler(llmSvcI, categorySvc, creditsSvc, ocrRecordRepo, llmTokenUsageRepo)
+	billingHandler := handler.NewBillingHandler(billingSvc, cfg.Billing)
 	statisticsHandler := handler.NewStatisticsHandler(statisticsSvc)
 	exporter := excel.NewExporter()
 	exportHandler := handler.NewExportHandler(transactionSvc, exporter, categoryRepo, transactionRepo, tenantRepo)
@@ -245,10 +272,18 @@ func main() {
 	// ========== 公开路由（无需认证） ==========
 	api.POST("/auth/register", authHandler.Register)
 	api.POST("/auth/login", authHandler.Login)
+	api.POST("/auth/wechat/login", authHandler.WeChatLogin)
+	api.POST("/auth/wechat/bind", authHandler.WeChatBind)
+	api.POST("/auth/wechat/register", authHandler.WeChatRegister)
+	api.GET("/auth/demo/config", authHandler.DemoConfig)
+	api.POST("/auth/demo/login", authHandler.DemoLogin)
+
+	// 服务间账单回调（小管家 -> 记账后端）：独立 HMAC，验签失败关闭流程。
+	api.POST("/internal/billing/delivery", billingHandler.Webhook)
 
 	// ========== 需要 JWT 的路由 ==========
 	auth := api.Group("/")
-	auth.Use(jwtMW)
+	auth.Use(jwtMW, middleware.DemoReadOnly())
 	{
 		auth.GET("/tenants", tenantHandler.List)
 		auth.POST("/tenants", tenantHandler.Create)
@@ -258,7 +293,7 @@ func main() {
 
 	// ========== 需要 JWT + 租户成员校验的路由 ==========
 	tenant := api.Group("/")
-	tenant.Use(jwtMW, tenantMW)
+	tenant.Use(jwtMW, tenantMW, middleware.DemoReadOnly())
 	{
 		// 租户通用设置（所有成员可读，admin 可写）
 		tenant.GET("/tenants/:id/settings", tenantHandler.GetSettings)
@@ -311,6 +346,13 @@ func main() {
 		tenant.PUT("/llm/config",
 			middleware.Casbin(enforcerPool, "tenant", "write"),
 			llmHandler.SaveConfig)
+		// 租户识别提示词（管理员查看 / 修改）
+		tenant.GET("/llm/prompt",
+			middleware.Casbin(enforcerPool, "tenant", "read"),
+			llmHandler.GetPrompt)
+		tenant.PUT("/llm/prompt",
+			middleware.Casbin(enforcerPool, "tenant", "write"),
+			llmHandler.SavePrompt)
 		// LLM 单独分析（OCR 完成后调用）
 		tenant.POST("/llm/analyze",
 			middleware.Casbin(enforcerPool, "transaction", "write"),
@@ -422,6 +464,13 @@ func main() {
 		tenant.GET("/credits", creditsHandler.GetBalance)
 		tenant.GET("/credits/logs", creditsHandler.GetLogs)
 
+		// 次数包/虚拟支付（默认关闭；购买仅账本管理员）
+		tenant.GET("/billing/summary", billingHandler.Summary)
+		tenant.POST("/billing/purchase-intents", billingHandler.CreateIntent)
+		tenant.POST("/billing/purchase-intents/:ref/prepare", billingHandler.Prepare)
+		tenant.GET("/billing/purchase-intents", billingHandler.ListIntents)
+		tenant.GET("/billing/purchase-intents/:ref", billingHandler.GetIntent)
+
 		// 分类读取（所有成员）
 		tenant.GET("/categories",
 			middleware.Casbin(enforcerPool, "category", "read"),
@@ -480,6 +529,9 @@ func main() {
 			// 定时任务管理
 			platformAuth.GET("/cron/jobs", cronHandler.ListJobs)
 			platformAuth.POST("/cron/jobs/:name/run", cronHandler.TriggerJob)
+
+			// 次数包草稿套餐初始化（显式调用，不自动改线上数据）
+			platformAuth.POST("/billing/packages/seed", billingHandler.SeedPackages)
 		}
 	}
 
@@ -577,4 +629,3 @@ func getEnv(key, defaultVal string) string {
 	}
 	return defaultVal
 }
-

@@ -14,6 +14,8 @@ type UserRepo interface {
 	GetByEmail(ctx context.Context, email string) (*model.User, error)
 	GetByUsername(ctx context.Context, username string) (*model.User, error)
 	GetByID(ctx context.Context, id uint64) (*model.User, error)
+	GetByWeChatOpenID(ctx context.Context, openID string) (*model.User, error)
+	BindWeChat(ctx context.Context, userID uint64, openID, unionID string) error
 	CountByRegisterIP(ctx context.Context, ip string) (int64, error)
 	UpdateLastLoginAt(ctx context.Context, userID uint64, t time.Time) error
 }
@@ -163,6 +165,31 @@ type PlatformConfigRepo interface {
 	GetByKey(ctx context.Context, key string) (*model.PlatformConfig, error)
 	GetAll(ctx context.Context) ([]*model.PlatformConfig, error)
 	Upsert(ctx context.Context, cfg *model.PlatformConfig) error
+}
+
+// DemoRepo 系统演示账号/账本唯一关联。
+type DemoRepo interface {
+	GetAccount(ctx context.Context) (*model.DemoAccount, error)
+	CreateAccount(ctx context.Context, account *model.DemoAccount) error
+	// WithInitLock 串行化演示账号初始化（MySQL GET_LOCK），避免并发创建多个演示用户/账本。
+	WithInitLock(ctx context.Context, fn func() error) error
+}
+
+// BillingRepo 账本次数包/购买意图/预占数据仓库接口。
+// 次数与旧积分是两套账，互不换算；默认 mode=credits 保留旧行为。
+type BillingRepo interface {
+	ListBillingPackages(ctx context.Context, appSlug string, listedOnly bool) ([]*model.BillingPackage, error)
+	UpsertBillingPackages(ctx context.Context, packages []*model.BillingPackage) error
+	GetBillingCapability(ctx context.Context, appSlug string) (*model.BillingCapability, error)
+	SaveBillingCapability(ctx context.Context, cap *model.BillingCapability) error
+	CreateBillingIntent(ctx context.Context, intent *model.BillingPurchaseIntent) error
+	GetBillingIntentByRef(ctx context.Context, tenantID uint64, ref string) (*model.BillingPurchaseIntent, error)
+	ListBillingIntents(ctx context.Context, tenantID uint64, page, size int) ([]*model.BillingPurchaseIntent, int64, error)
+	UpdateBillingIntent(ctx context.Context, intent *model.BillingPurchaseIntent) error
+	// ProcessBillingDelivery 在同一事务内记录唯一事件并发放现有积分批次/余额/流水；重复事件返回 already=true。
+	ProcessBillingDelivery(ctx context.Context, event *model.BillingDeliveryEvent) (already bool, err error)
+	// ProcessBillingRefund 只回收原订单积分批次剩余；已消耗部分记录人工核查，不制造负余额。
+	ProcessBillingRefund(ctx context.Context, event *model.BillingDeliveryEvent) (already bool, err error)
 }
 
 // TenantCreditsRepo 租户积分数据仓库接口

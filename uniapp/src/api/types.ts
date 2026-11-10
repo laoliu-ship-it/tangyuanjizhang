@@ -54,6 +54,19 @@ export interface AuthResult {
   username: string
   email: string
   tenants: { id: number; name: string }[]
+  demo?: boolean
+}
+
+export interface DemoConfig {
+  enabled: boolean
+  ttl_minutes: number
+}
+
+/** 微信登录结果：已绑定时返回 auth，未绑定时返回 bind_token 供关联/注册 */
+export interface WeChatLoginResult {
+  bound: boolean
+  bind_token?: string
+  auth?: AuthResult
 }
 
 // ── 分类 / 商户 ────────────────────────────────────────────────

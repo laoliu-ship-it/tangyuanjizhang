@@ -14,6 +14,8 @@ import (
 
 const ContextKeyUserID = "userID"
 const ContextKeyPlatformAdminID = "platformAdminID"
+const ContextKeyDemo = "demo"
+const ContextKeyDemoTenantID = "demoTenantID"
 
 func JWT(cfg *config.Config) gin.HandlerFunc {
 	return func(c *gin.Context) {
@@ -46,6 +48,8 @@ func JWT(cfg *config.Config) gin.HandlerFunc {
 		}
 
 		c.Set(ContextKeyUserID, claims.UserID)
+		c.Set(ContextKeyDemo, claims.Demo)
+		c.Set(ContextKeyDemoTenantID, claims.DemoTenantID)
 		c.Next()
 	}
 }

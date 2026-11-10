@@ -26,6 +26,14 @@
       }
     },
     {
+      "path": "pages/auth/wechat-bind",
+      "style": {
+        "navigationBarTitleText": "微信登录",
+        "navigationStyle": "custom",
+        "backgroundColor": "#f9fafb"
+      }
+    },
+    {
       "path": "pages/transactions/index",
       "style": {
         "navigationBarTitleText": "交易记录",
@@ -69,6 +77,14 @@
       "path": "pages/upload/index",
       "style": {
         "navigationBarTitleText": "拍照识别",
+        "navigationStyle": "custom",
+        "backgroundColor": "#f9fafb"
+      }
+    },
+    {
+      "path": "pages/billing/index",
+      "style": {
+        "navigationBarTitleText": "积分充值",
         "navigationStyle": "custom",
         "backgroundColor": "#f9fafb"
       }

@@ -63,6 +63,30 @@ func (r *userRepo) GetByID(ctx context.Context, id uint64) (*model.User, error) 
 	return &user, nil
 }
 
+func (r *userRepo) GetByWeChatOpenID(ctx context.Context, openID string) (*model.User, error) {
+	if openID == "" {
+		return nil, nil
+	}
+	var user model.User
+	err := r.db.WithContext(ctx).Where("wechat_openid = ? AND deleted_at IS NULL", openID).First(&user).Error
+	if err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return nil, nil
+		}
+		return nil, err
+	}
+	return &user, nil
+}
+
+func (r *userRepo) BindWeChat(ctx context.Context, userID uint64, openID, unionID string) error {
+	updates := map[string]interface{}{"wechat_openid": openID}
+	if unionID != "" {
+		updates["wechat_unionid"] = unionID
+	}
+	return r.db.WithContext(ctx).Model(&model.User{}).
+		Where("id = ?", userID).Updates(updates).Error
+}
+
 func (r *userRepo) CountByRegisterIP(ctx context.Context, ip string) (int64, error) {
 	var count int64
 	err := r.db.WithContext(ctx).Model(&model.User{}).

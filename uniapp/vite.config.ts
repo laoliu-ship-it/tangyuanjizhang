@@ -4,8 +4,8 @@ import path from 'node:path'
 
 export default defineConfig(({ mode }) => {
   const env = loadEnv(mode, process.cwd())
-  // 接口地址：make 脚本可通过 API_TARGET 注入，默认指向测试环境
-  const apiTarget = process.env.API_TARGET || env.VITE_API_TARGET || 'http://192.168.0.25:8090'
+  // 接口地址：make 脚本可通过 API_TARGET 注入，默认直接使用正式环境
+  const apiTarget = process.env.API_TARGET || env.VITE_API_TARGET || 'https://tangyuanjizhang.zaixianapp.cn'
 
   return {
     plugins: [uni()],

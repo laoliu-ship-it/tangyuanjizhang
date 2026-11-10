@@ -1,10 +1,16 @@
 <script setup lang="ts">
-// TODO(task): 由对应子任务实现 —— 拍照识别
+import AppPage from '@/components/AppPage.vue'
+import EmptyState from '@/components/EmptyState.vue'
+
+// P2 占位页：独立拍照识别页暂无入口，真实识别链路在记账表单内
 </script>
 
 <template>
-  <view class="page">
-    <view class="title-page">拍照识别</view>
-    <view class="text-3" style="margin-top: 12rpx">页面待实现</view>
-  </view>
+  <AppPage title="拍照识别" back>
+    <EmptyState
+      icon="📷"
+      text="功能建设中"
+      hint="请返回首页，点击「记一笔」上传票据，即可自动 OCR 识别"
+    />
+  </AppPage>
 </template>

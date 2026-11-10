@@ -6,24 +6,31 @@ import (
 
 // User 用户表
 type User struct {
-	ID           uint64     `gorm:"primaryKey;autoIncrement" json:"id"`
-	Username     string     `gorm:"uniqueIndex;size:50;not null" json:"username"`
-	Email        string     `gorm:"uniqueIndex;size:100;not null" json:"email"`
-	PasswordHash string     `gorm:"size:255;not null" json:"-"`
-	RegisterIP   string     `gorm:"size:45;default:''" json:"-"`
-	LastLoginAt  *time.Time `gorm:"comment:最近登录时间" json:"last_login_at"`
-	CreatedAt    time.Time  `json:"created_at"`
-	DeletedAt    *time.Time `gorm:"index" json:"-"`
+	ID           uint64 `gorm:"primaryKey;autoIncrement" json:"id"`
+	Username     string `gorm:"uniqueIndex;size:50;not null" json:"username"`
+	Email        string `gorm:"uniqueIndex;size:100;not null" json:"email"`
+	PasswordHash string `gorm:"size:255;not null" json:"-"`
+	RegisterIP   string `gorm:"size:45;default:''" json:"-"`
+	// WeChatOpenID / WeChatUnionID 使用可空指针，避免空串触发唯一索引冲突
+	WeChatOpenID  *string    `gorm:"column:wechat_openid;size:64;uniqueIndex" json:"-"`
+	WeChatUnionID *string    `gorm:"column:wechat_unionid;size:64;index" json:"-"`
+	LastLoginAt   *time.Time `gorm:"comment:最近登录时间" json:"last_login_at"`
+	// IsDemo 是系统演示账号标记；只有 DemoAccount 关联的账号才能被体验登录。
+	IsDemo    bool       `gorm:"not null;default:false;comment:系统演示账号" json:"-"`
+	CreatedAt time.Time  `json:"created_at"`
+	DeletedAt *time.Time `gorm:"index" json:"-"`
 }
 
 func (User) TableName() string { return "users" }
 
 // Tenant 租户表
 type Tenant struct {
-	ID        uint64     `gorm:"primaryKey;autoIncrement" json:"id"`
-	Name      string     `gorm:"size:100;not null" json:"name"`
-	OwnerID   uint64     `gorm:"not null" json:"owner_id"`
-	BookType  string     `gorm:"size:20;not null;default:'restaurant'" json:"book_type"`
+	ID       uint64 `gorm:"primaryKey;autoIncrement" json:"id"`
+	Name     string `gorm:"size:100;not null" json:"name"`
+	OwnerID  uint64 `gorm:"not null" json:"owner_id"`
+	BookType string `gorm:"size:20;not null;default:'restaurant'" json:"book_type"`
+	// IsDemo 标记系统演示账本；演示 token 只能访问该账本。
+	IsDemo    bool       `gorm:"not null;default:false;comment:系统演示账本" json:"-"`
 	CreatedAt time.Time  `json:"created_at"`
 	DeletedAt *time.Time `gorm:"index" json:"-"`
 
@@ -241,13 +248,13 @@ const (
 	ConfigKeyLLMCacheEnabled = "llm_cache_enabled" // "true" 或 "false"
 
 	// 积分计费配置键
-	ConfigKeyCreditsPerUpload   = "credits_per_upload"          // 每次上传新文件扣积分
-	ConfigKeyCreditsPerOCR      = "credits_per_ocr"             // 每次 OCR 识别扣积分
-	ConfigKeyCreditsPerOrc2bill = "credits_per_llm"             // 每次 AI 整理（OCR 转记账）扣积分；key 名沿用历史值 credits_per_llm，避免影响已有 platform_configs 数据
-	ConfigKeyCreditsPerGBPerDay = "credits_per_gb_per_day"      // 每 G 存储每天扣积分（预留）
-	ConfigKeyCreditsNewUserGift = "credits_new_user_gift"       // 新用户注册赠送积分
-	ConfigKeyMaxAccountsPerIP   = "credits_max_accounts_per_ip" // 同IP最多多少账号可获赠积分
-	ConfigKeyCreditsValidityDays = "credits_validity_days"      // 积分有效期（天），发放时刻起算
+	ConfigKeyCreditsPerUpload    = "credits_per_upload"          // 每次上传新文件扣积分
+	ConfigKeyCreditsPerOCR       = "credits_per_ocr"             // 每次 OCR 识别扣积分
+	ConfigKeyCreditsPerOrc2bill  = "credits_per_llm"             // 每次 AI 整理（OCR 转记账）扣积分；key 名沿用历史值 credits_per_llm，避免影响已有 platform_configs 数据
+	ConfigKeyCreditsPerGBPerDay  = "credits_per_gb_per_day"      // 每 G 存储每天扣积分（预留）
+	ConfigKeyCreditsNewUserGift  = "credits_new_user_gift"       // 新用户注册赠送积分
+	ConfigKeyMaxAccountsPerIP    = "credits_max_accounts_per_ip" // 同IP最多多少账号可获赠积分
+	ConfigKeyCreditsValidityDays = "credits_validity_days"       // 积分有效期（天），发放时刻起算
 
 	// 平台 LLM 配置键
 	ConfigKeyPlatformLLMEnabled  = "platform_llm_enabled"  // "true"/"false"
@@ -268,12 +275,12 @@ var DefaultPlatformConfigs = map[string]struct {
 	ConfigKeyOCRCacheEnabled: {Value: "true", Description: "是否启用 OCR 缓存"},
 	ConfigKeyLLMCacheEnabled: {Value: "true", Description: "是否启用 LLM 缓存"},
 	// 积分计费默认值
-	ConfigKeyCreditsPerUpload:   {Value: "5", Description: "每次上传新文件扣除积分数"},
-	ConfigKeyCreditsPerOCR:      {Value: "10", Description: "每次 OCR 识别扣除积分数"},
-	ConfigKeyCreditsPerOrc2bill: {Value: "20", Description: "每次 AI 整理（OCR 转记账）扣除积分数"},
-	ConfigKeyCreditsPerGBPerDay: {Value: "50", Description: "每 G 存储每天扣除积分数（预留）"},
-	ConfigKeyCreditsNewUserGift: {Value: "1000", Description: "新用户注册赠送积分数"},
-	ConfigKeyMaxAccountsPerIP:   {Value: "3", Description: "同一 IP 最多多少账号可获赠注册积分（0=不限制）"},
+	ConfigKeyCreditsPerUpload:    {Value: "5", Description: "每次上传新文件扣除积分数"},
+	ConfigKeyCreditsPerOCR:       {Value: "10", Description: "每次 OCR 识别扣除积分数"},
+	ConfigKeyCreditsPerOrc2bill:  {Value: "20", Description: "每次 AI 整理（OCR 转记账）扣除积分数"},
+	ConfigKeyCreditsPerGBPerDay:  {Value: "50", Description: "每 G 存储每天扣除积分数（预留）"},
+	ConfigKeyCreditsNewUserGift:  {Value: "1000", Description: "新用户注册赠送积分数"},
+	ConfigKeyMaxAccountsPerIP:    {Value: "3", Description: "同一 IP 最多多少账号可获赠注册积分（0=不限制）"},
 	ConfigKeyCreditsValidityDays: {Value: "365", Description: "积分有效期（天），从发放时刻起算"},
 	// 平台 LLM 配置默认值（空值=未配置）
 	ConfigKeyPlatformLLMEnabled:  {Value: "false", Description: "平台 LLM 是否启用"},
@@ -312,11 +319,13 @@ func (CreditLog) TableName() string { return "credit_logs" }
 
 // CreditLot 积分批次表：每次充值/赠送生成一条，扣费按 expires_at 升序逐批消耗（最近过期优先）
 type CreditLot struct {
-	ID        uint64    `gorm:"primaryKey;autoIncrement;comment:批次ID" json:"id"`
-	TenantID  uint64    `gorm:"not null;index:idx_lot_deduct,priority:1;comment:租户ID" json:"tenant_id"`
-	Amount    int64     `gorm:"not null;comment:原始发放数量（不变，追溯用）" json:"amount"`
-	Remaining int64     `gorm:"not null;comment:剩余可用数量" json:"remaining"`
-	Source    string    `gorm:"size:30;not null;comment:来源：gift/admin_adjust/migration，与发放流水action一致" json:"source"`
+	ID        uint64 `gorm:"primaryKey;autoIncrement;comment:批次ID" json:"id"`
+	TenantID  uint64 `gorm:"not null;index:idx_lot_deduct,priority:1;comment:租户ID" json:"tenant_id"`
+	Amount    int64  `gorm:"not null;comment:原始发放数量（不变，追溯用）" json:"amount"`
+	Remaining int64  `gorm:"not null;comment:剩余可用数量" json:"remaining"`
+	Source    string `gorm:"size:30;not null;comment:来源：gift/admin_adjust/migration/purchase，与发放流水action一致" json:"source"`
+	// OrderRef 是购买批次关联的业务单号/购买意图；退款只回收该来源批次。
+	OrderRef  string    `gorm:"size:64;index;comment:购买订单/业务引用" json:"order_ref"`
 	ExpiresAt time.Time `gorm:"not null;index:idx_lot_deduct,priority:2;index:idx_lot_expire;comment:过期时间" json:"expires_at"`
 	CreatedAt time.Time `gorm:"comment:发放时间" json:"created_at"`
 }

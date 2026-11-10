@@ -7,6 +7,7 @@ import (
 
 	"fandianjizhang/server/internal/dto"
 	"fandianjizhang/server/internal/middleware"
+	"fandianjizhang/server/internal/model"
 	"fandianjizhang/server/internal/service"
 
 	"github.com/gin-gonic/gin"
@@ -28,6 +29,16 @@ func (h *TenantHandler) List(c *gin.Context) {
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, dto.Fail(500, "获取租户列表失败: "+err.Error()))
 		return
+	}
+	if middleware.IsDemo(c) {
+		demoID := middleware.GetDemoTenantID(c)
+		filtered := make([]*model.Tenant, 0, 1)
+		for _, t := range tenants {
+			if t.ID == demoID {
+				filtered = append(filtered, t)
+			}
+		}
+		tenants = filtered
 	}
 	c.JSON(http.StatusOK, dto.OK(tenants))
 }

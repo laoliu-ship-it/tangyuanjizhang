@@ -117,6 +117,20 @@ function unwrap<T>(raw: unknown): T {
   return body as T
 }
 
+/**
+ * GET 参数清洗：小程序端 uni.request 会把 undefined / null 序列化成
+ * "undefined" / "null" 拼进 query，导致后端 ParseUint 报错，这里统一剔除。
+ */
+function cleanQueryData(data: RequestOptions['data']): RequestOptions['data'] {
+  if (!data || Array.isArray(data) || typeof data !== 'object') return data
+  const cleaned: Record<string, any> = {}
+  Object.keys(data).forEach((key) => {
+    const value = data[key]
+    if (value !== undefined && value !== null) cleaned[key] = value
+  })
+  return cleaned
+}
+
 /** 从错误体里尽量取 message */
 function errorMessage(raw: unknown, fallback: string): string {
   const body = safeJson(raw)
@@ -130,11 +144,13 @@ function errorMessage(raw: unknown, fallback: string): string {
 export function request<T>(opt: RequestOptions): Promise<T> {
   const { url, method = 'GET', data = null, timeout = REQUEST_TIMEOUT, header } = opt
 
+  const requestData = method === 'GET' ? cleanQueryData(data) : data
+
   return new Promise<T>((resolve, reject) => {
     uni.request({
       url: fullUrl(url),
       method,
-      data: data === null ? undefined : (data as UniNamespace.RequestOptions['data']),
+      data: requestData === null ? undefined : (requestData as UniNamespace.RequestOptions['data']),
       timeout,
       header: buildAuthHeaders(header),
       success: (res) => {

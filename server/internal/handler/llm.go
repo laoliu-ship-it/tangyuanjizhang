@@ -121,6 +121,10 @@ func (h *LLMHandler) SavePrompt(c *gin.Context) {
 // POST /api/llm/analyze
 func (h *LLMHandler) Analyze(c *gin.Context) {
 	tenantID := middleware.GetTenantID(c)
+	if middleware.IsDemo(c) {
+		c.JSON(http.StatusOK, dto.OK(dto.LLMAnalyzeResp{Suggestions: demoLLMSuggestions(), Demo: true}))
+		return
+	}
 
 	var req dto.LLMAnalyzeReq
 	if err := c.ShouldBindJSON(&req); err != nil {

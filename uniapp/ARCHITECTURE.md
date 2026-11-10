@@ -1,8 +1,11 @@
 # 汤圆记账 · 用户端 uni-app 架构设计
 
-> 目标：把现有 `web/`（React + Vite + Tailwind，约 8300 行）中的**用户端 H5** 用 uni-app（Vue 3）重写，
+> 目标：把现有 `web/`（React + Vite + Tailwind，约 8300 行）中的**用户端**用 uni-app（Vue 3）重写，
 > 保证功能等价、视觉一致，并为后续小程序/App 留出扩展位。
 > 平台管理端（`web/src/platform/**`）**不迁移**，继续留在 React 工程里。
+>
+> **2026-10-30 更新**：交付优先级调整为**微信小程序优先**，H5 保持兼容。
+> 小程序开发/构建/域名与隐私配置见 `uniapp/README.md`；跨端差异见下文 §7。
 
 ---
 
@@ -176,6 +179,7 @@ api/request.ts     —— 唯一网络出口
 | 1 | `pages/home/index` | 首页（启动页） | Tab 1 |
 | 2 | `pages/auth/login` | 登录 | `reLaunch` |
 | 3 | `pages/auth/register` | 注册 | `navigateTo` |
+| 3a | `pages/auth/wechat-bind` | 微信首次登录：关联已有邮箱 / 创建新账号（凭证经本地缓存传递） | `navigateTo` |
 | 4 | `pages/transactions/index` | 交易记录 | Tab 2 |
 | 5 | `pages/statistics/index` | 统计 | Tab 3 |
 | 6 | `pages/merchant/detail` | 商户明细（参数：`id,name,start,end`） | `navigateTo` |
@@ -393,7 +397,7 @@ pending → compressing(可选) → ocr_recognizing → llm_recognizing(可选) 
 
 | 模块 | 方法 & 路径 |
 |---|---|
-| 认证 | `POST /auth/register` `{username,email,password,book_type}` · `POST /auth/login` `{email,password}` |
+| 认证 | `POST /auth/register` `{username,email,password,book_type}` · `POST /auth/login` `{email,password}` · `POST /auth/wechat/login` `{code}` · `POST /auth/wechat/bind` `{bind_token,email,password}` · `POST /auth/wechat/register` `{bind_token,username,book_type}` |
 | 租户 | `GET/POST /tenants` · `PUT /tenants/:id` · `GET/POST /tenants/:id/members` · `PUT/DELETE /tenants/:id/members/:uid` · `GET/PUT /tenants/:id/settings` |
 | 分类 | `GET/POST /categories` · `PUT/DELETE /categories/:id` |
 | 商户 | `GET/POST /merchants` · `PUT/DELETE /merchants/:id` |

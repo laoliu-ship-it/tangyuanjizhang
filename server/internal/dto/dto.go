@@ -42,6 +42,44 @@ type LoginResp struct {
 	Username string          `json:"username"`
 	Email    string          `json:"email"`
 	Tenants  []TenantSummary `json:"tenants"`
+	Demo     bool            `json:"demo,omitempty"`
+}
+
+// DemoConfigResp 控制登录页是否展示「一键体验」。
+type DemoConfigResp struct {
+	Enabled    bool `json:"enabled"`
+	TTLMinutes int  `json:"ttl_minutes"`
+}
+
+// ========== 微信登录（小程序） ==========
+
+// WeChatLoginReq 微信小程序登录：前端 uni.login 拿到的一次性 code
+type WeChatLoginReq struct {
+	Code string `json:"code" binding:"required"`
+}
+
+// WeChatLoginResp 微信登录响应。
+// Bound=true 表示该微信已绑定账号，直接返回登录态；
+// Bound=false 时返回 bind_token，前端引导用户「关联已有邮箱账号」或「创建新账号」。
+type WeChatLoginResp struct {
+	Bound     bool       `json:"bound"`
+	BindToken string     `json:"bind_token,omitempty"`
+	Auth      *LoginResp `json:"auth,omitempty"`
+}
+
+// WeChatBindReq 将当前微信与已有邮箱账号关联
+type WeChatBindReq struct {
+	BindToken string `json:"bind_token" binding:"required"`
+	Email     string `json:"email" binding:"required,email"`
+	Password  string `json:"password" binding:"required"`
+}
+
+// WeChatRegisterReq 首次使用微信登录时直接创建新账号
+type WeChatRegisterReq struct {
+	BindToken  string `json:"bind_token" binding:"required"`
+	Username   string `json:"username" binding:"required,min=2,max=50"`
+	BookType   string `json:"book_type" binding:"required,oneof=restaurant family startup"`
+	RegisterIP string `json:"-"`
 }
 
 // ========== 租户 ==========
@@ -236,6 +274,7 @@ type OCRResponse struct {
 	RawTexts     []string `json:"raw_texts"`
 	Duplicate    bool     `json:"duplicate,omitempty"`
 	FileName     string   `json:"file_name,omitempty"`
+	Demo         bool     `json:"demo,omitempty"`
 }
 
 // OCRAnalyzeResponse OCR+LLM 合并接口响应（/upload/ocr/analyze，不改动）
@@ -251,6 +290,7 @@ type OCRAnalyzeResponse struct {
 	LLMError     string           `json:"llm_error,omitempty"`
 	Duplicate    bool             `json:"duplicate,omitempty"`
 	FileName     string           `json:"file_name,omitempty"`
+	Demo         bool             `json:"demo,omitempty"`
 }
 
 // ========== LLM ==========
@@ -330,6 +370,7 @@ type LLMAnalyzeReq struct {
 type LLMAnalyzeResp struct {
 	Suggestions []*LLMSuggestion `json:"suggestions"`
 	Error       string           `json:"error,omitempty"`
+	Demo        bool             `json:"demo,omitempty"`
 }
 
 // ========== 统计 ==========

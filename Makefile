@@ -8,7 +8,8 @@ APP_VERSION := $(shell grep '^version' fnos/manifest | awk '{print $$3}')
 FPK_NAME    := fandianjizhang.fpk
 
 .PHONY: all build deploy fnos-build fnos-deploy clean local qa prod \
-        page\:dev\:dev page\:dev\:qa page\:dev\:pro
+        page\:dev\:dev page\:dev\:qa page\:dev\:pro \
+        uniapp\:dev uniapp\:build uniapp\:dev\:mp uniapp\:build\:mp uniapp\:type-check
 
 # ── 环境说明 ─────────────────────────────────────────────────
 #   开发环境：本地，make local 启动（已在跑则销毁重启），共用测试环境数据库
@@ -103,6 +104,26 @@ page\:dev\:qa:
 
 page\:dev\:pro:
 	$(call start_page,$(API_PRO))
+
+# ── uni-app 用户端（微信小程序优先，不影响现有发布流程）────────
+#   make uniapp:dev        H5 本地开发（:5275，代理正式环境）
+#   make uniapp:build      H5 生产构建（uniapp/dist/build/h5）
+#   make uniapp:dev:mp     微信小程序开发构建（uniapp/dist/dev/mp-weixin）
+#   make uniapp:build:mp   微信小程序生产构建（uniapp/dist/build/mp-weixin）
+uniapp\:dev:
+	cd uniapp && npm run dev:h5
+
+uniapp\:build:
+	cd uniapp && npm run build:h5
+
+uniapp\:dev\:mp:
+	cd uniapp && npm run dev:mp-weixin
+
+uniapp\:build\:mp:
+	cd uniapp && npm run build:mp-weixin
+
+uniapp\:type-check:
+	cd uniapp && npm run type-check
 
 clean:
 	rm -f fnos/app/server

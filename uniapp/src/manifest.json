@@ -30,13 +30,21 @@
   },
   "quickapp": {},
   "mp-weixin": {
-    "appid": "",
+    "appid": "wxb80e8003e55c24ef",
     "setting": {
       "urlCheck": false,
       "es6": true,
-      "minified": true
+      "enhance": true,
+      "postcss": true,
+      "minified": true,
+      "minifyWXSS": true,
+      "minifyWXML": true
     },
-    "usingComponents": true
+    "usingComponents": true,
+    "lazyCodeLoading": "requiredComponents",
+    "optimization": {
+      "subPackages": false
+    }
   },
   "h5": {
     "title": "汤圆记账",
@@ -50,5 +58,10 @@
       }
     }
   },
-  "vueVersion": "3"
+  "vueVersion": "3",
+  "networkTimeout": {
+    "request": 20000,
+    "uploadFile": 60000,
+    "downloadFile": 60000
+  }
 }

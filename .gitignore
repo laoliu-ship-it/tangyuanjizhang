@@ -12,3 +12,8 @@ dist/server
 fnos/app/server
 logs/
 uniapp/node_modules
+
+# uni-app 构建产物（H5 旧产物若需发布另行处理）
+uniapp/dist/build/mp-weixin/
+uniapp/dist/dev/
+uniapp/dist/

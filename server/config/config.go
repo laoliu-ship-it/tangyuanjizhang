@@ -6,12 +6,32 @@ import (
 )
 
 type Config struct {
-	DB     DBConfig
-	JWT    JWTConfig
-	OCR    OCRConfig
-	LLM    LLMConfig
-	Upload UploadConfig
-	Server ServerConfig
+	DB      DBConfig
+	JWT     JWTConfig
+	OCR     OCRConfig
+	LLM     LLMConfig
+	Upload  UploadConfig
+	Server  ServerConfig
+	WeChat  WeChatConfig
+	Billing BillingConfig
+}
+
+// BillingConfig 次数包/虚拟支付。默认关闭；XGJ 服务间 secret 只从环境变量读取，不写入日志。
+type BillingConfig struct {
+	Enabled             bool
+	DemoLoginEnabled    bool
+	DemoTTLMinutes      int
+	AppSlug             string
+	XGJBaseURL          string
+	XGJSecret           string
+	ClockSkewSeconds    int
+	DefaultValidityDays int
+}
+
+// WeChatConfig 微信小程序登录配置（AppID / AppSecret 在微信公众平台获取）
+type WeChatConfig struct {
+	AppID  string
+	Secret string
 }
 
 // LLMConfig 平台级 LLM 配置，从环境变量读取，作为租户未配置时的兜底
@@ -34,9 +54,9 @@ type JWTConfig struct {
 }
 
 type OCRConfig struct {
-	Engine           string
-	RapidOCRURL      string
-	AIMode           bool
+	Engine             string
+	RapidOCRURL        string
+	AIMode             bool
 	LLMCacheTTLSeconds int // LLM 结果缓存时长（秒），0=不缓存
 }
 
@@ -58,9 +78,9 @@ func Load() *Config {
 			Secret: getEnv("JWT_SECRET", "default_jwt_secret_change_in_production"),
 		},
 		OCR: OCRConfig{
-			Engine:           getEnv("OCR_ENGINE", "rapidocr"),
-			RapidOCRURL:      getEnv("OCR_RAPIDOCR_URL", "http://localhost:8001/ocr"),
-			AIMode:           getEnv("OCR_AI_MODE", "false") == "true",
+			Engine:             getEnv("OCR_ENGINE", "rapidocr"),
+			RapidOCRURL:        getEnv("OCR_RAPIDOCR_URL", "http://localhost:8001/ocr"),
+			AIMode:             getEnv("OCR_AI_MODE", "false") == "true",
 			LLMCacheTTLSeconds: parseInt(getEnv("OCR_LLM_CACHE_TTL", "3600")),
 		},
 		LLM: LLMConfig{
@@ -78,6 +98,20 @@ func Load() *Config {
 		},
 		Server: ServerConfig{
 			Port: getEnv("SERVER_PORT", "7072"),
+		},
+		WeChat: WeChatConfig{
+			AppID:  getEnv("WECHAT_MINI_APPID", ""),
+			Secret: getEnv("WECHAT_MINI_SECRET", ""),
+		},
+		Billing: BillingConfig{
+			Enabled:             getEnv("BILLING_ENABLED", "false") == "true",
+			DemoLoginEnabled:    getEnv("BILLING_DEMO_LOGIN_ENABLED", "false") == "true",
+			DemoTTLMinutes:      parseInt(getEnv("BILLING_DEMO_TTL_MINUTES", "30")),
+			AppSlug:             getEnv("BILLING_XGJ_APP_SLUG", "hehuojizhangzhushou"),
+			XGJBaseURL:          getEnv("BILLING_XGJ_BASE_URL", ""),
+			XGJSecret:           getEnv("BILLING_XGJ_SECRET", ""),
+			ClockSkewSeconds:    parseInt(getEnv("BILLING_CLOCK_SKEW_SECONDS", "300")),
+			DefaultValidityDays: parseInt(getEnv("BILLING_DEFAULT_VALIDITY_DAYS", "365")),
 		},
 	}
 }

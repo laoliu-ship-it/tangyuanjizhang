@@ -7,13 +7,20 @@ export const routes = {
   home: '/pages/home/index',
   login: '/pages/auth/login',
   register: '/pages/auth/register',
+  wechatBind: '/pages/auth/wechat-bind',
   transactions: '/pages/transactions/index',
   statistics: '/pages/statistics/index',
   settings: '/pages/settings/index',
   help: '/pages/help/index',
   merchantDetail: '/pages/merchant/detail',
   upload: '/pages/upload/index',
+  billing: '/pages/billing/index',
 } as const
+
+/** 打开积分充值/订单页 */
+export function goBilling(): void {
+  uni.navigateTo({ url: routes.billing })
+}
 
 export type TabKey = 'home' | 'transactions' | 'statistics' | 'settings' | 'help'
 

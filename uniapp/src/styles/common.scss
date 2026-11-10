@@ -242,4 +242,8 @@
     max-width: 750px;
     margin: 0 auto;
   }
+
+  .fab {
+    right: calc((100vw - 750px) / 2 + 32rpx);
+  }
 }

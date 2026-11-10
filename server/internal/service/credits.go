@@ -169,13 +169,21 @@ func (s *creditsService) ListTenantCredits(ctx context.Context, tenantIDs []uint
 	return result, nil
 }
 
-// getActionCost 从 platform_configs 读取 action 对应单价，读取失败或未配置返回 0
+// getActionCost 从 platform_configs 读取 action 对应单价，读取失败或未配置返回 0。
+// 与购买积分估算共用同一解析口径，避免展示与真实扣费不一致。
 func (s *creditsService) getActionCost(ctx context.Context, action string) int64 {
+	return getPlatformActionCost(ctx, s.configRepo, action)
+}
+
+func getPlatformActionCost(ctx context.Context, configRepo repo.PlatformConfigRepo, action string) int64 {
+	if configRepo == nil {
+		return 0
+	}
 	key := actionToConfigKey(action)
 	if key == "" {
 		return 0
 	}
-	cfg, err := s.configRepo.GetByKey(ctx, key)
+	cfg, err := configRepo.GetByKey(ctx, key)
 	if err != nil || cfg == nil {
 		return 0
 	}

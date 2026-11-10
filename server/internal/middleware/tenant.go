@@ -38,6 +38,15 @@ func Tenant(tenantMemberRepo repo.TenantMemberRepo) gin.HandlerFunc {
 			return
 		}
 
+		// 演示 token 只能访问其唯一绑定的演示账本，绝不因 membership 存在而进入真实账本。
+		if IsDemo(c) {
+			if demoID := GetDemoTenantID(c); demoID == 0 || tenantID != demoID {
+				c.JSON(http.StatusForbidden, dto.Fail(403, "演示账号只能访问演示账本"))
+				c.Abort()
+				return
+			}
+		}
+
 		role, err := tenantMemberRepo.GetRole(c.Request.Context(), tenantID, userID)
 		if err != nil {
 			c.JSON(http.StatusInternalServerError, dto.Fail(500, "服务器内部错误"))

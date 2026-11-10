@@ -50,6 +50,8 @@ OCR_RAPIDOCR_URL=http://127.0.0.1:8001/ocr
 OCR_AI_MODE=false
 UPLOAD_PATH=/home/nana/fandianjizhang/app/uploads
 SERVER_PORT=8090
+WECHAT_MINI_APPID=
+WECHAT_MINI_SECRET=
 ENV_EOF
   sed -i "s/__JWT_SECRET_PLACEHOLDER__/$(openssl rand -hex 32)/" ~/fandianjizhang/.env
   echo "[!] 创建了新的 .env（含默认 DB_DSN/OCR/UPLOAD_PATH/SERVER_PORT，JWT_SECRET 已生成，用户需重新登录）"
